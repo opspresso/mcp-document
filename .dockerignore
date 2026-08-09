@@ -1,0 +1,16 @@
+# Not an optimisation. BuildKit transfers only the files a COPY asks for, and
+# the Dockerfile asks for four by name plus src/ and assets/.
+#
+# It is a guard. The day a `COPY . .` appears, or a `.env` or a local `dist/` is
+# sitting in the working directory when the release workflow runs, this is what
+# keeps it out of an image that gets pushed to two registries.
+#
+# `assets/` is deliberately absent from this list: the fonts in it are the one
+# thing the image needs at runtime that the build does not produce.
+node_modules/
+dist/
+.git/
+.github/
+.env*
+*.log
+tmp-check/
