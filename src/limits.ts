@@ -3,10 +3,9 @@
  * hitting one.
  *
  * They live together because they are one budget seen from different sides: the
- * body cap bounds what an inline document may be, the document cap bounds what
- * a parser is handed, and the character cap bounds what a model receives. A
- * change to one that ignores the others produces a limit that can never be
- * reached or one that is reached before the useful work happens.
+ * body cap bounds what a document may be, and the character cap bounds what a
+ * model receives. A change to one that ignores the other produces a limit that
+ * can never be reached or one that is reached before the useful work happens.
  */
 
 /**
@@ -14,19 +13,10 @@
  *
  * Larger than `mcp-url-fetch`'s 64KB on purpose: `read_document` accepts a
  * document inline as base64, and base64 costs a third on top of the bytes. This
- * is what makes a ~11.5MB document sendable inline; anything past that has to
- * arrive as a `url`, and the 413 says so.
+ * is what makes a ~11.5MB document sendable inline; anything past that is
+ * refused with a 413 that says why.
  */
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
-
-/**
- * A document handed to an extractor.
- *
- * This bounds what a *parser* is given, not what a model receives — the
- * character budget below does that. Reachable only through `url`: the body cap
- * cuts an inline document well before this.
- */
-export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 
 /**
  * Extracted text handed back to the caller.
@@ -39,7 +29,7 @@ export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 90_000;
 
 /**
- * Markdown accepted by `write_document`.
+ * Markdown accepted by `render_document`.
  *
  * Well inside the body cap, so this is about the renderers rather than about
  * transport: each one walks the block list building a whole document in memory,
@@ -59,9 +49,6 @@ export const MAX_MARKDOWN_CHARS = 500_000;
  */
 export const MAX_ZIP_ENTRIES = 2_000;
 export const MAX_EXPANDED_BYTES = 100 * 1024 * 1024;
-
-/** How long a fetch of a `url` may take before it is abandoned. */
-export const FETCH_TIMEOUT_MS = 15_000;
 
 export function truncateText(text: string, maxChars: number): { text: string; note?: string } {
   if (text.length <= maxChars) {

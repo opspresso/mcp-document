@@ -66,8 +66,9 @@ async function readBody(request: IncomingMessage): Promise<string> {
     size += (chunk as Buffer).byteLength;
     if (size > MAX_BODY_BYTES) {
       throw new BodyTooLarge(
-        `request body is over the ${MAX_BODY_BYTES.toLocaleString("en-US")} byte limit — a ` +
-          "document that large has to be passed as `url` rather than inline",
+        `request body is over the ${MAX_BODY_BYTES.toLocaleString("en-US")} byte limit — base64 ` +
+          "costs a third on top of the document's own bytes, so a larger document cannot be " +
+          "sent inline",
       );
     }
     chunks.push(chunk as Buffer);
