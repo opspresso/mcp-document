@@ -1,9 +1,10 @@
 /**
  * What this server calls itself.
  *
- * Its own file because both ends need it and they cannot reach each other:
- * `server.ts` tells a client what it connected to, and `source.ts` tells every
- * site it fetches the same thing in a User-Agent.
+ * Its own file because two places need it and neither should reach the other:
+ * `server.ts` tells a client what it connected to, and `write/hwpx.ts` stamps
+ * it into a document's metadata as the application that produced it. (It was a
+ * User-Agent as well, until fetching left.)
  *
  * `SERVER_VERSION` restates package.json's `version`. A test pins the two
  * together: nothing else would notice them drifting, and what a client is told
@@ -11,4 +12,4 @@
  */
 
 export const SERVER_NAME = "mcp-document";
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.2.0";
