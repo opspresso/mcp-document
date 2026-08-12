@@ -143,6 +143,18 @@ test("the same target twice reuses its relationship", () => {
   assert.equal(rels.match(/Type="[^"]*\/hyperlink"/g)?.length, 1);
 });
 
+test("a table's graphicData carries the one URI PowerPoint knows tables by", () => {
+  // `.../drawingml/2006/table` — the namespace with `main` swapped out, not
+  // appended to. This assertion exists because the appended form shipped:
+  // schema-valid, accepted by five other parsers, and PowerPoint's repair
+  // flow gutted every slide that contained a table.
+  const slide = partOf(build("## s\n\n| a | b |\n|---|---|\n| 1 | 2 |"), "ppt/slides/slide1.xml");
+  assert.ok(
+    slide.includes('<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">'),
+    "the graphicData uri must be the drawingml table URI, with no /main/ in it",
+  );
+});
+
 test("a table names the default style, and the style part defines it", () => {
   const bytes = build("## s\n\n| a | b |\n|---|---|\n| 1 | 2 |");
   const slide = partOf(bytes, "ppt/slides/slide1.xml");

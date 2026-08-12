@@ -546,7 +546,13 @@ class Renderer {
       "<p:nvPr/></p:nvGraphicFramePr>" +
       `<p:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
       `<a:ext cx="${total}" cy="${ROW_HEIGHT * rows.length}"/></p:xfrm>` +
-      `<a:graphic><a:graphicData uri="${A}/table"><a:tbl>` +
+      // The literal URI, not `${A}/table`: the table's graphicData URI is
+      // `.../drawingml/2006/table` — the namespace with `main` swapped out, not
+      // appended to. PowerPoint identifies the embedded object by this string
+      // alone, and an unknown URI is not "a table it renders differently", it is
+      // damage: the repair flow throws away the whole slide's content. No schema
+      // catches it, because to a schema a URI is just a token.
+      '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl>' +
       // The style id resolves against `tableStyles.xml`; every visible border
       // is still stated per cell, so the style only supplies what native files
       // always carry.
