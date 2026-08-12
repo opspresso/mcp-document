@@ -14,15 +14,60 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { parseMarkdown } from "../markdown.js";
 import { MAX_TEXT_CHARS } from "../limits.js";
-import { pdfToText } from "../read/pdf.js";
 import { PDFDocument } from "pdf-lib";
 import { columnWidths, renderPdf, usesBold } from "./pdf.js";
 
 const CREATED = new Date("2026-08-05T00:00:00Z");
 
+/**
+ * `unpdf` directly, rather than through a reader of ours.
+ *
+ * The PDF *reader* left with the URL side — the caller extracts PDFs in-process
+ * and routing one here would have been a network round trip to reach this same
+ * library. The round trip is still the only honest check that what this writes
+ * is a PDF something can read, so the test keeps the dependency the source no
+ * longer needs.
+ */
+/**
+ * `Math.sumPrecise` is a TC39 proposal no Node this runs on has. The PDF.js
+ * build inside `unpdf` calls it while rebuilding an embedded font's glyph
+ * tables, so every font throws a TypeError it catches and reports as a warning —
+ * one line per font, which buries everything else in the test output. Neumaier
+ * summation is more than enough for glyph byte counts, and it is installed only
+ * if absent so a future runtime's own wins.
+ *
+ * It lived beside the PDF *reader* until that left with the URL side; only this
+ * round trip still needs it.
+ */
+const math = Math as unknown as { sumPrecise?: (values: Iterable<number>) => number };
+if (typeof math.sumPrecise !== "function") {
+  math.sumPrecise = (values) => {
+    let sum = 0;
+    let compensation = 0;
+    for (const value of values) {
+      const next = sum + value;
+      compensation +=
+        Math.abs(sum) >= Math.abs(value) ? sum - next + value : value - next + sum;
+      sum = next;
+    }
+    return sum + compensation;
+  };
+}
+
+/**
+ * Page by page, joined the way the reader that used to live here did — a merged
+ * extract loses the line structure one of these tests is entirely about.
+ */
+async function extractLines(bytes: Uint8Array): Promise<string> {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text } = await extractText(pdf, { mergePages: false });
+  return text.join("\n\n");
+}
+
 async function roundTrip(markdown: string): Promise<string> {
   const { bytes } = await renderPdf(parseMarkdown(markdown), { title: "test", created: CREATED });
-  const { text } = await pdfToText(bytes, MAX_TEXT_CHARS);
+  const text = await extractLines(bytes);
   // Line breaks are the renderer's, not the document's, so they are not what
   // these assertions are about.
   return text.replace(/\s+/g, " ").trim();
@@ -77,7 +122,7 @@ test("a long Korean paragraph wraps instead of running off the page", async () =
   // produces a single line the width of the document.
   const sentence = "이 문장은 공백 없이".replace(/ /g, "") .repeat(60);
   const { bytes } = await renderPdf(parseMarkdown(sentence), { title: "t", created: CREATED });
-  const { text } = await pdfToText(bytes, MAX_TEXT_CHARS);
+  const text = await extractLines(bytes);
   assert.ok(text.includes("\n"), "the paragraph should have been broken across lines");
   assert.equal(text.replace(/\s+/g, ""), sentence);
 });

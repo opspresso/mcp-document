@@ -1,5 +1,7 @@
 /**
- * The decisions on the way in, none of which touch the network.
+ * The decisions on the way in. None of them touch the network — and now there is
+ * no network here to touch: the URL side left with the outbound boundary, which
+ * was a byte-for-byte copy of the caller's.
  *
  * The base64 cases are the ones that matter. `Buffer.from(x, "base64")` drops
  * every character outside the alphabet rather than failing, so without the
@@ -10,31 +12,8 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { decodeBase64, filenameFromUrl, loadSource, parseContentType, SourceError } from "./source.js";
+import { decodeBase64, loadSource, SourceError } from "./source.js";
 
-test("a content type is split from its charset", () => {
-  assert.deepEqual(parseContentType("application/pdf"), { mimeType: "application/pdf" });
-  assert.deepEqual(parseContentType("text/plain; charset=EUC-KR"), {
-    mimeType: "text/plain",
-    charset: "euc-kr",
-  });
-  assert.deepEqual(parseContentType('text/csv;charset="utf-8"'), {
-    mimeType: "text/csv",
-    charset: "utf-8",
-  });
-  assert.deepEqual(parseContentType(null), { mimeType: "" });
-});
-
-test("a filename hint is taken from the URL only when it carries an extension", () => {
-  assert.equal(filenameFromUrl("https://example.com/a/report.hwp"), "report.hwp");
-  assert.equal(filenameFromUrl("https://example.com/a/report.hwp?v=2"), "report.hwp");
-  assert.equal(filenameFromUrl("https://example.com/%ED%95%9C%EA%B8%80.docx"), "한글.docx");
-  // Nothing to learn from these, and offering them would make the detector
-  // confident about something it was told nothing about.
-  assert.equal(filenameFromUrl("https://example.com/download"), undefined);
-  assert.equal(filenameFromUrl("https://example.com/"), undefined);
-  assert.equal(filenameFromUrl("not a url"), undefined);
-});
 
 test("base64 round-trips", () => {
   const bytes = decodeBase64(Buffer.from("hello 한글").toString("base64"));
@@ -63,21 +42,20 @@ test("a data: URL is refused with the fix in the message", () => {
   );
 });
 
-test("exactly one source is required", async () => {
-  await assert.rejects(() => loadSource({}), SourceError);
-  await assert.rejects(
-    () => loadSource({ url: "https://example.com/a.pdf", content: "AAAA" }),
-    (error: unknown) => error instanceof SourceError && /not both/.test(error.message),
+test("content is required, and says what it wants", () => {
+  assert.throws(
+    () => loadSource({}),
+    (error: unknown) => error instanceof SourceError && /base64/.test(error.message),
   );
 });
 
-test("an inline document is labelled by its filename, or said to be uploaded", async () => {
-  const named = await loadSource({ content: "aGVsbG8=", filename: "report.docx" });
+test("an inline document is labelled by its filename, or said to be uploaded", () => {
+  const named = loadSource({ content: "aGVsbG8=", filename: "report.docx" });
   assert.equal(named.label, "report.docx");
   assert.equal(named.filename, "report.docx");
   // Nothing is invented when the caller named nothing: a made-up filename would
   // appear in the provenance header as if it were a fact.
-  const anonymous = await loadSource({ content: "aGVsbG8=" });
+  const anonymous = loadSource({ content: "aGVsbG8=" });
   assert.equal(anonymous.label, "an uploaded document");
   assert.equal(anonymous.filename, undefined);
   assert.equal(anonymous.mimeType, "");

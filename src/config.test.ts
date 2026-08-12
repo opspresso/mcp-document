@@ -2,60 +2,38 @@
  * Boot-time validation, which is the only thing standing between a mistyped
  * environment and a server that runs while doing the wrong thing.
  *
- * The prefix cases are the ones with teeth: it is joined with a tenant to make
- * an S3 key, so a segment a path reads as movement is a way for one deployment
- * to write under another's documents.
+ * Small, because the configuration is: the bucket, its prefix, the region and
+ * the download TTL all left when the renderer stopped storing anything. The
+ * prefix cases had teeth — it was joined with a tenant to make an S3 key, so a
+ * segment a path reads as movement was a way for one deployment to write under
+ * another's documents — and they are gone with the key they built.
  */
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { ConfigError, loadConfig, MAX_DOWNLOAD_TTL_SECONDS } from "./config.js";
-
-const base = { DOCUMENT_BUCKET: "docs" };
+import { ConfigError, loadConfig } from "./config.js";
 
 test("the defaults are the deployment this is built for", () => {
-  const config = loadConfig({ ...base });
+  const config = loadConfig({});
   assert.equal(config.port, 3000);
-  assert.equal(config.region, "ap-northeast-2");
-  assert.equal(config.prefix, "documents");
-  assert.equal(config.downloadTtlSeconds, MAX_DOWNLOAD_TTL_SECONDS);
+  // Unset means open, which is the deployment this is built for: a Deployment
+  // behind a ClusterIP with no ingress. See auth.ts.
   assert.equal(config.apiKey, undefined);
 });
 
-test("a missing bucket stops the rollout rather than the first write", () => {
-  assert.throws(() => loadConfig({}), ConfigError);
-  assert.throws(() => loadConfig({ DOCUMENT_BUCKET: "   " }), ConfigError);
+test("nothing is required, because nothing outside this process is", () => {
+  // It used to refuse to boot without DOCUMENT_BUCKET — half a server was not a
+  // state worth being able to deploy. There is no half now.
+  assert.doesNotThrow(() => loadConfig({}));
 });
 
-test("an empty prefix means no prefix", () => {
-  assert.equal(loadConfig({ ...base, DOCUMENT_PREFIX: "" }).prefix, "");
-  assert.equal(loadConfig({ ...base, DOCUMENT_PREFIX: "/" }).prefix, "");
+test("a blank api key reads as unset rather than as an empty secret", () => {
+  assert.equal(loadConfig({ MCP_API_KEY: "   " }).apiKey, undefined);
+  assert.equal(loadConfig({ MCP_API_KEY: " s3cret " }).apiKey, "s3cret");
 });
 
-test("surrounding slashes are normalised away, so the key joins cleanly", () => {
-  assert.equal(loadConfig({ ...base, DOCUMENT_PREFIX: "/a/b/" }).prefix, "a/b");
-});
-
-test("a prefix a path would read as movement is refused", () => {
-  for (const prefix of ["../escape", "a/../b", "a/./b", "a//b", "-lead", "a b"]) {
-    assert.throws(
-      () => loadConfig({ ...base, DOCUMENT_PREFIX: prefix }),
-      ConfigError,
-      `expected ${JSON.stringify(prefix)} to be refused`,
-    );
-  }
-});
-
-test("a TTL past what SigV4 will sign is a configuration error, not a dead link", () => {
-  assert.throws(
-    () => loadConfig({ ...base, DOWNLOAD_TTL_SECONDS: String(MAX_DOWNLOAD_TTL_SECONDS + 1) }),
-    ConfigError,
-  );
-  assert.equal(loadConfig({ ...base, DOWNLOAD_TTL_SECONDS: "3600" }).downloadTtlSeconds, 3600);
-});
-
-test("a non-integer or non-positive number is refused rather than coerced", () => {
+test("a non-integer or non-positive port is refused rather than coerced", () => {
   for (const value of ["0", "-1", "1.5", "many"]) {
-    assert.throws(() => loadConfig({ ...base, PORT: value }), ConfigError);
+    assert.throws(() => loadConfig({ PORT: value }), ConfigError);
   }
 });

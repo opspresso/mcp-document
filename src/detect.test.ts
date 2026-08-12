@@ -24,11 +24,11 @@ function reasonOf(bytes: Uint8Array, mimeType = "", filename?: string): string {
 }
 
 test("magic bytes decide, whatever the header said", () => {
-  // A PDF behind a download endpoint is served as octet-stream constantly, and
-  // a `.hwp` almost always is. A header that disagrees with the file's own
-  // first bytes is wrong about the file.
-  assert.equal(detect(utf8("%PDF-1.7\n..."), "application/octet-stream", "x.bin").format, "pdf");
-  assert.equal(detect(utf8("%PDF-1.4"), "text/plain", "notes.txt").format, "pdf");
+  // A `.hwp` behind a download endpoint is served as octet-stream almost always.
+  // A header that disagrees with the file's own first bytes is wrong about it.
+  const ole = Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+  assert.equal(detect(ole, "application/octet-stream", "x.bin").format, "hwp");
+  assert.equal(detect(ole, "text/plain", "notes.txt").format, "hwp");
 });
 
 test("a zip is identified by the part it carries", () => {
@@ -41,11 +41,16 @@ test("a zip is identified by the part it carries", () => {
   assert.equal(detect(hwpx, "", undefined).format, "hwpx");
 });
 
-test("a zip that is a different office format is named rather than dismissed", () => {
+test("a zip is identified by the office format it carries", () => {
   const xlsx = buildZip({ "xl/workbook.xml": utf8("<workbook/>") });
-  assert.match(reasonOf(xlsx), /Excel workbook \(\.xlsx\)/);
+  assert.equal(detect(xlsx, "", undefined).format, "xlsx");
   const pptx = buildZip({ "ppt/presentation.xml": utf8("<p/>") });
-  assert.match(reasonOf(pptx), /PowerPoint deck \(\.pptx\)/);
+  assert.equal(detect(pptx, "", undefined).format, "pptx");
+  const odf = buildZip({ mimetype: utf8("application/vnd.oasis.opendocument.text"), "content.xml": utf8("<x/>") });
+  assert.equal(detect(odf, "", undefined).format, "odf");
+});
+
+test("a zip this does not read is still named rather than dismissed", () => {
   const epub = buildZip({ "META-INF/container.xml": utf8("<container/>") });
   assert.match(reasonOf(epub), /EPUB/);
   const plain = buildZip({ "notes.txt": utf8("hello") });
@@ -66,26 +71,32 @@ test("HWP 3.0 names its version and the way out of it", () => {
   assert.match(reason, /\.hwpx/);
 });
 
-test("a web page is sent to the server that reads web pages", () => {
-  assert.match(reasonOf(utf8("<html><body>hi</body></html>"), "text/html"), /fetch_document/);
-  assert.match(reasonOf(utf8("<html/>"), "", "page.htm"), /fetch_document/);
+test("a web page goes back to the caller, which converts pages itself", () => {
+  assert.match(reasonOf(utf8("<html><body>hi</body></html>"), "text/html"), /an HTML page/);
+  assert.match(reasonOf(utf8("<html/>"), "", "page.htm"), /the caller reads for itself/);
 });
 
-test("an image is sent to the tool that returns pictures", () => {
-  assert.match(reasonOf(Uint8Array.from([1, 2, 3, 4]), "image/png"), /fetch_image/);
+test("an image is named as an image rather than as an unreadable document", () => {
+  assert.match(reasonOf(Uint8Array.from([1, 2, 3, 4]), "image/png"), /an image rather than a document/);
 });
 
-test("text is recognised from its bytes when nothing declared it", () => {
-  assert.equal(detect(utf8("# Notes\n\nplain text"), "", undefined).format, "text");
-  assert.equal(detect(utf8('{"a":1}'), "application/json", undefined).format, "text");
-  assert.equal(detect(utf8("a,b,c\n1,2,3"), "", "data.csv").format, "text");
+test("text is recognised as text, and handed back rather than parsed here", () => {
+  // Still recognised — the refusal names the format, which is what stops a
+  // caller concluding the document is unreadable — but no longer read here.
+  for (const [bytes, mime, name] of [
+    [utf8("# Notes\n\nplain text"), "", undefined],
+    [utf8('{"a":1}'), "application/json", undefined],
+    [utf8("a,b,c\n1,2,3"), "", "data.csv"],
+  ] as const) {
+    assert.match(reasonOf(bytes, mime, name), /a plain-text document, which the caller reads/);
+  }
 });
 
 test("EUC-KR bytes are text, though they are not valid UTF-8", () => {
   // Decoding is the decoder's problem. Judging text by whether UTF-8 succeeds
   // would refuse every Korean document written before UTF-8 won.
   const eucKr = Uint8Array.from([0xc7, 0xd1, 0xb1, 0xdb, 0x0a, 0x74, 0x65, 0x78, 0x74]);
-  assert.equal(detect(eucKr, "", "memo.txt").format, "text");
+  assert.match(reasonOf(eucKr, "", "memo.txt"), /a plain-text document/);
   assert.equal(looksLikeText(eucKr), true);
 });
 
@@ -100,16 +111,35 @@ test("an empty document is empty, not unrecognised", () => {
 });
 
 test("a name that promises one thing and bytes that are another says so", () => {
-  assert.match(reasonOf(utf8("hello"), "", "report.pdf"), /named \.pdf, but its contents are not/);
+  // Only for the formats this still parses. A `.pdf` is answered earlier now —
+  // whatever its bytes turn out to be, it is not this server's to read.
+  assert.match(reasonOf(utf8("hello"), "", "report.docx"), /named \.docx, but its contents are not/);
   assert.match(
-    reasonOf(utf8("hello"), "application/pdf"),
-    /served as application\/pdf, but its contents are not/,
+    reasonOf(utf8("hello"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    /but its contents are not DOCX/,
   );
 });
 
+test("a format the caller reads is refused by name rather than as unrecognised", () => {
+  // "Unsupported" would send a model looking for another tool; naming the format
+  // and saying who does read it ends the search in one turn.
+  for (const [bytes, mime, name] of [
+    [utf8("%PDF-1.4 x"), "", "report.pdf"],
+    [utf8("hello"), "", "notes.md"],
+    [utf8("<html><body>hi</body></html>"), "text/html", "page.html"],
+  ] as const) {
+    assert.match(reasonOf(bytes, mime, name), /the caller reads for itself/);
+  }
+});
+
 test("a legacy binary named by its extension is named in the refusal", () => {
-  assert.match(reasonOf(utf8("hello"), "", "old.rtf"), /Rich Text Format/);
   assert.match(reasonOf(utf8("hello"), "", "sheet.xls"), /Excel 97-2003/);
+  assert.match(reasonOf(utf8("hello"), "", "old.doc"), /Word 97-2003/);
+});
+
+test("a name that promises a format this reads, over bytes that are not it, says so", () => {
+  assert.match(reasonOf(utf8("hello"), "", "book.xlsx"), /but its contents are not XLSX/);
+  assert.match(reasonOf(utf8("hello"), "", "notes.rtf"), /but its contents are not RTF/);
 });
 
 test("extensions are read off the end of a name, case-insensitively", () => {

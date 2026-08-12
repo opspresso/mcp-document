@@ -15,7 +15,23 @@
 
 import { listEntries, looksLikeZip } from "./zip.js";
 
-export type Format = "pdf" | "docx" | "hwpx" | "hwp" | "text";
+/** What this server parses. PDF and plain text belong to the caller. */
+export type Format =
+  | "docx"
+  | "hwpx"
+  | "hwp"
+  | "xlsx"
+  | "pptx"
+  | "odf"
+  | "rtf";
+
+/**
+ * What a type *claims* to be, including the two kinds this server no longer
+ * reads. Kept in the tables so a refusal can name the format rather than
+ * shrugging — "this is a PDF, which the caller reads for itself" beats "not a
+ * document format this tool recognises".
+ */
+type DeclaredKind = Format | "pdf" | "text";
 
 export type Detection = { format: Format } | { format: "unsupported"; reason: string };
 
@@ -52,6 +68,12 @@ function looksLikeOle(bytes: Uint8Array): boolean {
  */
 const HWP3_SIGNATURE = "HWP Document File V3.00";
 
+/** `{\rtf` — the header every RTF writer emits, after optional whitespace. */
+function looksLikeRtf(bytes: Uint8Array): boolean {
+  const head = Buffer.from(bytes.subarray(0, 16)).toString("latin1").trimStart();
+  return head.startsWith("{\\rtf");
+}
+
 function looksLikeHwp3(bytes: Uint8Array): boolean {
   return (
     bytes.length >= HWP3_SIGNATURE.length &&
@@ -87,7 +109,7 @@ export function looksLikeText(bytes: Uint8Array): boolean {
   return control / sample.length < 0.05;
 }
 
-const BY_MIME_TYPE: Record<string, Format> = {
+const BY_MIME_TYPE: Record<string, DeclaredKind> = {
   "application/pdf": "pdf",
   "application/x-pdf": "pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -95,6 +117,13 @@ const BY_MIME_TYPE: Record<string, Format> = {
   "application/vnd.hancom.hwpx": "hwpx",
   "application/haansofthwpx": "hwpx",
   "application/x-hwp": "hwp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.oasis.opendocument.text": "odf",
+  "application/vnd.oasis.opendocument.spreadsheet": "odf",
+  "application/vnd.oasis.opendocument.presentation": "odf",
+  "application/rtf": "rtf",
+  "text/rtf": "rtf",
   "application/vnd.hancom.hwp": "hwp",
   "application/haansofthwp": "hwp",
   "application/json": "text",
@@ -105,11 +134,17 @@ const BY_MIME_TYPE: Record<string, Format> = {
   "application/x-ndjson": "text",
 };
 
-const BY_EXTENSION: Record<string, Format> = {
+const BY_EXTENSION: Record<string, DeclaredKind> = {
   pdf: "pdf",
   docx: "docx",
   hwpx: "hwpx",
   hwp: "hwp",
+  xlsx: "xlsx",
+  pptx: "pptx",
+  odt: "odf",
+  ods: "odf",
+  odp: "odf",
+  rtf: "rtf",
   txt: "text",
   text: "text",
   md: "text",
@@ -132,19 +167,27 @@ const NAMED_REFUSALS: Record<string, string> = {
   doc: "a Word 97-2003 document (.doc)",
   xls: "an Excel 97-2003 workbook (.xls)",
   ppt: "a PowerPoint 97-2003 deck (.ppt)",
-  xlsx: "an Excel workbook (.xlsx)",
-  pptx: "a PowerPoint deck (.pptx)",
-  odt: "an OpenDocument text file (.odt)",
-  ods: "an OpenDocument spreadsheet (.ods)",
-  odp: "an OpenDocument presentation (.odp)",
-  rtf: "a Rich Text Format file (.rtf)",
   epub: "an EPUB book (.epub)",
 };
 
-const READS = "This tool reads PDF, DOCX, HWP, HWPX and plain text.";
+const READS =
+  "This tool reads DOCX, XLSX, PPTX, HWP, HWPX, OpenDocument (ODT/ODS/ODP) and RTF — the " +
+  "office formats that need a parser.";
 
 function refuse(reason: string): Detection {
   return { format: "unsupported", reason };
+}
+
+/**
+ * A format the caller already reads.
+ *
+ * PDF and plain text need nothing this server has that AgentDure does not: the
+ * app extracts both in-process, so routing one here would be a network round
+ * trip to reach the same `unpdf`. Saying which formats *do* belong here is what
+ * stops a caller from concluding the document is unreadable.
+ */
+function READ_THERE(what: string): string {
+  return `this is ${what}, which the caller reads for itself rather than sending here. ${READS}`;
 }
 
 /** Said in one place so every refusal names the same set of formats. */
@@ -152,12 +195,9 @@ function cannotRead(what: string): Detection {
   return refuse(`this is ${what}, which this tool cannot read. ${READS}`);
 }
 
-/** A web page belongs to the other server, and saying so saves a turn. */
+/** A web page is text the caller already converts, and saying so saves a turn. */
 function isWebPage(): Detection {
-  return refuse(
-    "this is an HTML page, not a document — mcp-url-fetch's fetch_document reads web pages and " +
-      "converts them to text",
-  );
+  return refuse(READ_THERE("an HTML page"));
 }
 
 export function extensionOf(filename: string | undefined): string | undefined {
@@ -179,13 +219,13 @@ function insideZip(bytes: Uint8Array): Detection {
     return { format: "hwpx" };
   }
   if (names.has("xl/workbook.xml")) {
-    return cannotRead("an Excel workbook (.xlsx)");
+    return { format: "xlsx" };
   }
   if (names.has("ppt/presentation.xml")) {
-    return cannotRead("a PowerPoint deck (.pptx)");
+    return { format: "pptx" };
   }
   if (names.has("content.xml") && names.has("mimetype")) {
-    return cannotRead("an OpenDocument file");
+    return { format: "odf" };
   }
   if (names.has("META-INF/container.xml")) {
     return cannotRead("an EPUB book (.epub)");
@@ -202,10 +242,19 @@ export function detect(
     return refuse("the document is empty");
   }
   if (looksLikePdf(bytes)) {
-    return { format: "pdf" };
+    // Read by the caller, not here. This server is the office-format parser now:
+    // PDF and plain text need no dependency AgentDure does not already carry, so
+    // sending them over MCP would be a network round trip to reach `unpdf`.
+    return refuse(READ_THERE("a PDF"));
   }
   if (looksLikeZip(bytes)) {
     return insideZip(bytes);
+  }
+  if (looksLikeRtf(bytes)) {
+    // Ahead of every text branch below, and that order is the point: RTF *is*
+    // text, so without this it would be read as plain and reach the model as
+    // thousands of control words with the prose scattered through them.
+    return { format: "rtf" };
   }
   if (looksLikeHwp3(bytes)) {
     // Its own case because the extension branch below would otherwise report a
@@ -225,8 +274,8 @@ export function detect(
 
   if (mimeType.startsWith("image/")) {
     return refuse(
-      `this is ${mimeType}, an image rather than a document — mcp-url-fetch's fetch_image ` +
-        "returns the picture itself",
+      `this is ${mimeType}, an image rather than a document — the caller fetches and shows ` +
+        "pictures itself",
     );
   }
   if (mimeType === "text/html" || mimeType === "application/xhtml+xml") {
@@ -237,8 +286,8 @@ export function detect(
     // Only the text branch can be honoured on the header alone: every other
     // format here has magic bytes, and not finding them means the body is not
     // what the header claimed.
-    if (declared === "text") {
-      return { format: "text" };
+    if (declared === "text" || declared === "pdf") {
+      return refuse(READ_THERE(declared === "pdf" ? "a PDF" : "a plain-text document"));
     }
     return refuse(
       `this was served as ${mimeType}, but its contents are not ${declared.toUpperCase()}`,
@@ -254,8 +303,8 @@ export function detect(
     return cannotRead(named);
   }
   const byExtension = extension ? BY_EXTENSION[extension] : undefined;
-  if (byExtension === "text") {
-    return { format: "text" };
+  if (byExtension === "text" || byExtension === "pdf") {
+    return refuse(READ_THERE(byExtension === "pdf" ? "a PDF" : "a plain-text document"));
   }
   if (byExtension) {
     return refuse(
@@ -264,7 +313,7 @@ export function detect(
   }
 
   if (mimeType.startsWith("text/") || looksLikeText(bytes)) {
-    return { format: "text" };
+    return refuse(READ_THERE("a plain-text document"));
   }
   return refuse(
     `this is not a document format this tool recognises${mimeType ? ` (served as ${mimeType})` : ""}. ${READS}`,

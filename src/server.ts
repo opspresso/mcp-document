@@ -18,7 +18,6 @@ import { authorizes, describeAuth } from "./auth.js";
 import { ConfigError, loadConfig, type Config } from "./config.js";
 import { MAX_BODY_BYTES } from "./limits.js";
 import { callTool, TOOLS } from "./tools.js";
-import { TENANT_HEADER } from "./tenant.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -30,11 +29,7 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-async function handle(
-  config: Config,
-  message: JsonRpcRequest,
-  headers: IncomingMessage["headers"],
-): Promise<unknown> {
+async function handle(message: JsonRpcRequest): Promise<unknown> {
   switch (message.method) {
     case "initialize":
       return {
@@ -54,12 +49,7 @@ async function handle(
       if (!TOOLS.some((tool) => tool.name === name)) {
         throw new Error(`unknown tool: ${String(name)}`);
       }
-      return callTool(
-        config,
-        name,
-        (message.params?.arguments ?? {}) as Record<string, unknown>,
-        headers,
-      );
+      return callTool(name, (message.params?.arguments ?? {}) as Record<string, unknown>);
     }
     default:
       throw new Error(`unsupported method: ${message.method}`);
@@ -157,7 +147,7 @@ function start(config: Config): void {
         send(response, 200, {
           jsonrpc: "2.0",
           id: message.id,
-          result: await handle(config, message, request.headers),
+          result: await handle(message),
         });
       } catch (error) {
         send(response, 200, {
@@ -171,10 +161,7 @@ function start(config: Config): void {
 
   server.listen(config.port, () => {
     console.log(`${SERVER_NAME} v${SERVER_VERSION} listening on :${config.port} (POST /mcp)`);
-    console.log(
-      `documents: s3://${config.bucket}/${config.prefix ? `${config.prefix}/` : ""}<${TENANT_HEADER}>/ ` +
-        `in ${config.region}, links valid for ${config.downloadTtlSeconds}s`,
-    );
+    console.log("documents are returned to the caller; this server stores nothing");
     // Always, not only when open: an operator reading logs to find out which
     // mode an instance is in should not have to infer it from a missing line.
     const notice = describeAuth(config.apiKey);

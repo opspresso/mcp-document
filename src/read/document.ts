@@ -10,6 +10,11 @@
  * Every path returns text or raises. None of them returns an empty success: an
  * empty string reads as "the document is empty", which is a different and much
  * more damaging claim than "I could not read it".
+ *
+ * Three formats, all of them office containers. PDF and plain text left with the
+ * URL side: they need no parser AgentDure lacks, so routing one here was a
+ * network round trip to reach the same `unpdf` — and a third copy of the
+ * extraction to keep in step.
  */
 
 import { detect, type Format } from "../detect.js";
@@ -19,8 +24,10 @@ import { DocumentError } from "../errors.js";
 import { docxToText } from "./docx.js";
 import { hwpToText } from "./hwp5.js";
 import { hwpxToText } from "./hwpx.js";
-import { pdfToText } from "./pdf.js";
-import { plainToText } from "./plain.js";
+import { odfToText } from "./odf.js";
+import { pptxToText } from "./pptx.js";
+import { rtfToText } from "./rtf.js";
+import { xlsxToText } from "./xlsx.js";
 
 export class UnsupportedDocument extends DocumentError {}
 
@@ -55,13 +62,6 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
   }
   const format = detection.format;
 
-  if (format === "pdf") {
-    // The only reader that budgets for itself: it drops whole pages rather than
-    // cutting mid-page, so the cut and the note have to be made together.
-    const { text, note } = await pdfToText(source.bytes, MAX_TEXT_CHARS);
-    return { text, format, note };
-  }
-
   if (format === "docx") {
     const { text } = docxToText(source.bytes);
     return { format, ...fit(text, "the document body, without headers, footers or footnotes") };
@@ -72,17 +72,48 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
     return { format, ...fit(text, `all ${sections} section(s)`) };
   }
 
-  if (format === "hwp") {
-    const { text, sections, version } = hwpToText(source.bytes);
-    return { format, ...fit(text, `all ${sections} section(s) of an HWP ${version} document`) };
+  if (format === "xlsx") {
+    // The only reader besides the old PDF one that budgets for itself: a sheet
+    // can dwarf any text budget, and cutting mid-row would leave a line whose
+    // columns no longer line up with its neighbours'.
+    const { text, sheets, totalSheets, rows, totalRows } = xlsxToText(source.bytes, MAX_TEXT_CHARS);
+    const whole = sheets === totalSheets && rows === totalRows;
+    return {
+      text,
+      format,
+      note: whole
+        ? `all ${totalSheets} sheet(s), ${totalRows} row(s)`
+        : `${rows} of ${totalRows} row(s) across ${sheets} of ${totalSheets} sheet(s)`,
+    };
   }
 
-  const { text, charset } = plainToText(source.bytes, source.charset);
-  if (text === "") {
-    throw new UnsupportedDocument("the document has no readable text");
+  if (format === "pptx") {
+    const { text, slides } = pptxToText(source.bytes);
+    return {
+      format,
+      ...fit(text, `all ${slides} slide(s), without speaker notes`),
+    };
   }
-  // The charset is stated only when it was not the one everybody assumes.
-  // Saying "decoded as utf-8" on every plain file is noise; saying it on the
-  // EUC-KR one is the difference between trusting the text and not.
-  return { format, ...fit(text, charset === "utf-8" ? undefined : `text decoded as ${charset}`) };
+
+  if (format === "odf") {
+    const { text, kind, parts } = odfToText(source.bytes);
+    const unit = kind === "spreadsheet" ? "sheet" : "slide";
+    return {
+      format,
+      ...fit(
+        text,
+        parts === undefined
+          ? "the document body, without headers or footers"
+          : `all ${parts} ${unit}(s)`,
+      ),
+    };
+  }
+
+  if (format === "rtf") {
+    const { text } = rtfToText(source.bytes);
+    return { format, ...fit(text, "the document body, without headers or footers") };
+  }
+
+  const { text, sections, version } = hwpToText(source.bytes);
+  return { format, ...fit(text, `all ${sections} section(s) of an HWP ${version} document`) };
 }
