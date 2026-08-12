@@ -87,4 +87,4 @@ export function asUntrustedContent(source: string, text: string, note?: string):
  * JSON-RPC response arrives as a parse failure, which tells nobody that the
  * document was simply too big.
  */
-export const MAX_RENDERED_BYTES = 1_400_000;
+export const MAX_RENDERED_BYTES = 10_000_000;
