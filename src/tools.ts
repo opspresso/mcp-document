@@ -87,7 +87,9 @@ export const TOOLS = [
       "this to deliver something a person will read or share: a report, a summary, meeting " +
       "notes, a proposal, a slide deck. Supports headings, paragraphs, bold, italic, inline " +
       "code, links, bullet and numbered lists, tables, block quotes, fenced code blocks and " +
-      "horizontal rules. Two lines with no blank line between them are one paragraph, as in " +
+      "horizontal rules. A table column is set flush right with `---:` in the divider row and " +
+      "centred with `:---:` — set columns of numbers right, or their digits do not line up. " +
+      "Two lines with no blank line between them are one paragraph, as in " +
       "Markdown. Images are not embedded; an image becomes a link. In pptx every level 1 or 2 " +
       "heading starts a new slide and becomes its title, so write one heading per slide and " +
       "keep what follows it short — a few bullets or a small table; deeper headings stay in " +
