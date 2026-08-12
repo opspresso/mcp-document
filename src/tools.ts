@@ -22,6 +22,7 @@ import { SERVER_VERSION } from "./version.js";
 import { renderDocx } from "./write/docx.js";
 import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
+import { renderPptx } from "./write/pptx.js";
 
 /**
  * A text block, or an embedded resource carrying bytes.
@@ -43,13 +44,14 @@ export interface ToolResult {
   isError?: true;
 }
 
-export const FORMATS = ["docx", "pdf", "hwpx"] as const;
+export const FORMATS = ["docx", "pdf", "hwpx", "pptx"] as const;
 export type Format = (typeof FORMATS)[number];
 
 export const CONTENT_TYPES: Record<Format, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   pdf: "application/pdf",
   hwpx: "application/hwp+zip",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
 export const TOOLS = [
@@ -81,19 +83,24 @@ export const TOOLS = [
     name: "render_document",
     description:
       "Write a document and return the file. Takes Markdown and produces DOCX " +
-      "(Word), PDF, or HWPX (한글) — pick the one the reader will open. Use this to deliver " +
-      "something a person will read or share: a report, a summary, meeting notes, a proposal. " +
-      "Supports headings, paragraphs, bold, italic, inline code, links, bullet and numbered " +
-      "lists, tables, block quotes, fenced code blocks and horizontal rules. Two lines with no " +
-      "blank line between them are one paragraph, as in Markdown. Images are not embedded; an " +
-      "image becomes a link. Returns the file itself; the caller delivers it to the user.",
+      "(Word), PDF, HWPX (한글) or PPTX (PowerPoint) — pick the one the reader will open. Use " +
+      "this to deliver something a person will read or share: a report, a summary, meeting " +
+      "notes, a proposal, a slide deck. Supports headings, paragraphs, bold, italic, inline " +
+      "code, links, bullet and numbered lists, tables, block quotes, fenced code blocks and " +
+      "horizontal rules. Two lines with no blank line between them are one paragraph, as in " +
+      "Markdown. Images are not embedded; an image becomes a link. In pptx every level 1 or 2 " +
+      "heading starts a new slide and becomes its title, so write one heading per slide and " +
+      "keep what follows it short — a few bullets or a small table; deeper headings stay in " +
+      "the body, and anything that does not fit continues on the next slide. Returns the file " +
+      "itself; the caller delivers it to the user.",
     inputSchema: {
       type: "object",
       properties: {
         format: {
           type: "string",
           enum: [...FORMATS],
-          description: "docx for Word, pdf to be read as-is, hwpx for 한글.",
+          description:
+            "docx for Word, pdf to be read as-is, hwpx for 한글, pptx for a slide deck.",
         },
         content: { type: "string", description: "The document body, as Markdown." },
         title: {
@@ -251,6 +258,13 @@ async function renderTo(
       created: meta.created.toISOString(),
       application: SERVER_VERSION,
     });
+  } else if (format === "pptx") {
+    const rendered = renderPptx(document, {
+      title: meta.title,
+      created: meta.created.toISOString(),
+    });
+    bytes = rendered.bytes;
+    extra = `, ${rendered.slides} slide${rendered.slides === 1 ? "" : "s"}`;
   } else {
     const rendered = await renderPdf(document, { title: meta.title, created: meta.created });
     bytes = rendered.bytes;

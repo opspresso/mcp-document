@@ -4,8 +4,8 @@ An MCP server that parses office documents and writes them.
 
 | Tool | Takes | Returns |
 |---|---|---|
-| `read_document(content, filename?)` | DOCX, XLSX, PPTX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as an MCP `text` block |
-| `render_document(format, content, title?, filename?)` | Markdown → `docx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
+| `read_document(content, filename?)` | DOCX, PPTX, XLSX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as an MCP `text` block |
+| `render_document(format, content, title?, filename?)` | Markdown → `docx` `pptx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
 
 It exists because a document is not its text, and a report is not a file. An
 agent handed a `.hwp` or a `.docx` cannot open it — the format is a container it
@@ -59,7 +59,7 @@ The protocol surface is four methods, and the one dependency that mattered in
 the sibling repository was an SDK whose schema generation changed under a server
 written against an older release. A hand-written handler has no such drift.
 
-The same reasoning decides the format layer. DOCX and HWPX are written by
+The same reasoning decides the format layer. DOCX, HWPX and PPTX are written by
 composing their parts directly, and read by a tag walker rather than a DOM
 parse: what these formats are actually used for here is a dozen elements, and a
 library's idea of a paragraph is one more thing between the document and the
@@ -123,7 +123,7 @@ text. That failure is worse than the refusal.
 
 ## Writing
 
-`render_document` takes Markdown and produces one of three formats. Supported:
+`render_document` takes Markdown and produces one of four formats. Supported:
 ATX headings, paragraphs, `**bold**`, `*italic*`, `` `code` ``, links, bullet
 and numbered lists nested up to four levels (two spaces of indent to a level),
 GFM tables, block quotes, fenced code blocks, and horizontal rules.
@@ -139,11 +139,34 @@ exception: nothing here fetches or embeds pictures, so `![alt](url)` becomes a
 link labelled with its alt text, which keeps both the description and the
 address.
 
-Lists carry **literal markers** in all three formats rather than a numbering
+Lists carry **literal markers** in all four formats rather than a numbering
 definition. What real numbering buys is the reader's editor renumbering a list
 they edit; nothing here is edited before it is read, and the literal form is
 what survives extraction back to text — which is how this server's own round
 trip checks itself.
+
+### Where a slide ends
+
+`pptx` is the one output that is not a page of prose, so it has a question the
+others do not: a slide is a fixed box, and text past the bottom of one is not on
+the screen at all.
+
+**A slide opens at every level 1 or 2 heading**, which becomes its title; a
+document that starts with `#` gets that first slide as a cover. Level 3 and
+below stay in the body as sub-headings. Nothing else in Markdown says "new
+slide" — a horizontal rule, which is what Marp uses, turns a decorative divider
+into a page break in every document that was not written as a deck. It also
+makes the round trip symmetric: reading a deck produces `## Slide N`, and
+writing that back produces the same slides.
+
+**What does not fit continues on the next slide**, titled `… (계속)`. The line
+count is an estimate: nothing here measures a font, because unlike the PDF
+renderer this one embeds none and cannot know what the reader's PowerPoint will
+substitute. Being a line out puts a line nearer the edge than intended, which is
+a better failure than letting a slide overflow and lose it. Blocks are flattened
+to lines before a slide is filled, which is what lets a numbered list split
+across two slides and still count 4, 5, 6; a table splits by row and repeats its
+header.
 
 ### The Korean font, and a bug worth knowing about
 
@@ -285,7 +308,7 @@ unprivileged `node` user and needs no writable volume:
 Tests cover the pure decisions — format detection, the zip budget, the HWP
 record walk and its control-character table, the spreadsheet's column
 arithmetic and row budget, RTF's destinations and escapes, the Markdown parser,
-character truncation, filename sanitisation — and, for each of the three
+character truncation, filename sanitisation — and, for each of the four
 writers, a **round trip**: Markdown is rendered to a document and read back, so
 both directions fail together or not at all.
 
@@ -295,8 +318,10 @@ the URL side, but rendering a PDF nothing can read is worth catching.
 Nothing touches the network, and now nothing can: there is no client here.
 
 What tests cannot cover is what a document *looks like*. Open the output — a
-`.docx` in Word or Google Docs, a `.pdf` in a viewer, a `.hwpx` in 한글 — before
-trusting a change to a renderer.
+`.docx` in Word or Google Docs, a `.pdf` in a viewer, a `.hwpx` in 한글, a
+`.pptx` in PowerPoint or Keynote — before trusting a change to a renderer. This
+matters most for `pptx`, whose line counting is an estimate: a slide that
+overflows is visible only on the screen.
 
 `Verify` runs typecheck, the tests and a `docker build` on every pull request.
 The release workflow runs them again on the tag.

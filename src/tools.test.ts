@@ -148,3 +148,15 @@ test("a rendered document comes back as bytes, not a link", async () => {
   assert.match(text, /보고서\.docx/);
   assert.doesNotMatch(text, /https?:\/\//);
 });
+
+test("a deck comes back as a deck, and says how many slides it is", async () => {
+  const { text, isError, file } = await call("render_document", {
+    format: "pptx",
+    content: "# 표지\n\n## 첫째\n\n내용\n\n## 둘째\n\n내용",
+  });
+  assert.equal(isError, false);
+  assert.equal(file?.mimeType, CONTENT_TYPES.pptx);
+  assert.match(file?.uri ?? "", /pptx$/);
+  // The slide count is what a page count is for a PDF: the unit the format has.
+  assert.match(text, /3 slides/);
+});
