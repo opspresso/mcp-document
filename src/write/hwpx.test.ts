@@ -121,6 +121,21 @@ test("a column asked to be centred or set right says so in its paragraph propert
   assert.ok(alignments.has("RIGHT"), "the second asked to be set right");
 });
 
+test("a paragraph that wraps carries one lineseg per estimated line", () => {
+  // 한글's checker flags a wrapped paragraph holding a single lineseg as
+  // depending on non-standard reflow. The estimate only has to get the count
+  // roughly right — the editor recalculates the geometry on open.
+  const long = "가".repeat(120);
+  const section = partOf(build(`${long}\n\n짧은 문단`), "Contents/section0.xml");
+  const arrays = [...section.matchAll(/<hp:linesegarray>([\s\S]*?)<\/hp:linesegarray>/g)].map(
+    (match) => (match[1]!.match(/<hp:lineseg /g) ?? []).length,
+  );
+  assert.ok((arrays[0] ?? 0) >= 2, `120 wide characters should wrap: got ${arrays[0]} lineseg(s)`);
+  assert.equal(arrays[1], 1, "a short paragraph is one line");
+  // Every lineseg after the first names where its line starts.
+  assert.match(section, /<hp:lineseg textpos="[1-9]\d*"/);
+});
+
 test("the section properties are written exactly once", () => {
   // They ride inside the first run of the document. Twice is a second section
   // definition; never is a document with no page size.

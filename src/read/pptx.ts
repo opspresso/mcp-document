@@ -48,9 +48,13 @@ class Extractor implements XmlHandler {
   private buffer = "";
   private textDepth = 0;
   private cellDepth = 0;
+  private fieldDepth = 0;
 
   text(value: string): void {
-    if (this.textDepth > 0) {
+    // Text inside `a:fld` is a render cache, not content: a slide-number field
+    // carries the digit PowerPoint last computed, and reading it out would put
+    // a stray "7" on the end of every slide.
+    if (this.textDepth > 0 && this.fieldDepth === 0) {
       this.buffer += value;
     }
   }
@@ -66,6 +70,11 @@ class Extractor implements XmlHandler {
       case "br":
         this.buffer += "\n";
         return;
+      case "fld":
+        if (!selfClosing) {
+          this.fieldDepth += 1;
+        }
+        return;
       case "tc":
         this.cellDepth += 1;
         return;
@@ -79,6 +88,11 @@ class Extractor implements XmlHandler {
       case "t":
         if (this.textDepth > 0) {
           this.textDepth -= 1;
+        }
+        return;
+      case "fld":
+        if (this.fieldDepth > 0) {
+          this.fieldDepth -= 1;
         }
         return;
       case "tc":

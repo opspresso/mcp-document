@@ -45,6 +45,7 @@ test("a deck has the scaffolding its content types declare", () => {
     "docProps/app.xml",
     "docProps/core.xml",
     "ppt/_rels/presentation.xml.rels",
+    "ppt/presProps.xml",
     "ppt/presentation.xml",
     "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
     "ppt/slideLayouts/_rels/slideLayout2.xml.rels",
@@ -54,7 +55,9 @@ test("a deck has the scaffolding its content types declare", () => {
     "ppt/slideMasters/slideMaster1.xml",
     "ppt/slides/_rels/slide1.xml.rels",
     "ppt/slides/slide1.xml",
+    "ppt/tableStyles.xml",
     "ppt/theme/theme1.xml",
+    "ppt/viewProps.xml",
   ]);
   const types = partOf(bytes, "[Content_Types].xml");
   for (const declared of [
@@ -62,6 +65,9 @@ test("a deck has the scaffolding its content types declare", () => {
     "/ppt/slideMasters/slideMaster1.xml",
     "/ppt/slides/slide1.xml",
     "/ppt/theme/theme1.xml",
+    "/ppt/presProps.xml",
+    "/ppt/viewProps.xml",
+    "/ppt/tableStyles.xml",
   ]) {
     assert.ok(types.includes(declared), `content types should name ${declared}`);
   }
@@ -137,6 +143,14 @@ test("the same target twice reuses its relationship", () => {
   assert.equal(rels.match(/Type="[^"]*\/hyperlink"/g)?.length, 1);
 });
 
+test("a table names the default style, and the style part defines it", () => {
+  const bytes = build("## s\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  const id = /<a:tableStyleId>(\{[0-9A-F-]+\})<\/a:tableStyleId>/.exec(slide)?.[1];
+  assert.ok(id, "every native table names a style; one that does not reads as damage");
+  assert.ok(partOf(bytes, "ppt/tableStyles.xml").includes(`def="${id}"`));
+});
+
 test("a table becomes a table, and every cell has a paragraph in it", () => {
   const bytes = build("## s\n\n| 이름 | 값 |\n|---|---|\n| a | 1 |\n| b |  |");
   assert.ok(pptxToText(bytes).text.includes("이름 | 값\na | 1\nb"));
@@ -157,19 +171,31 @@ test("a column asked to be set right is set right", () => {
   assert.equal(plain.includes('algn="r"'), false);
 });
 
-test("a slide is numbered by a field that carries no text of its own", () => {
+test("every shape carries a text body, empty or not", () => {
+  // `p:txBody` is `minOccurs="0"` in the schema and mandatory in practice:
+  // PowerPoint calls a `p:sp` without one damaged and offers to repair the file.
+  // The accent bar under a title was written without one and did exactly that.
+  const slide = partOf(build("# 표지\n\n## 본문\n\n내용"), "ppt/slides/slide2.xml");
+  assert.equal(
+    /<p:sp>(?:(?!<\/p:sp>|<p:txBody>)[\s\S])*<\/p:sp>/.test(slide),
+    false,
+    "a shape with no p:txBody makes PowerPoint offer a repair",
+  );
+});
+
+test("a slide is numbered by a field whose cached text stays out of extraction", () => {
   const bytes = build("# 표지\n\n## 본문\n\n내용");
   const numbered = partOf(bytes, "ppt/slides/slide2.xml");
-  assert.match(numbered, /<a:fld id="\{[0-9A-F-]+\}" type="slidenum">/);
-  // No `a:t` inside the field: the literal would be picked up by every text
-  // extractor, including this server's own reader.
-  assert.equal(/<a:fld[^>]*>[\s\S]*?<a:t>/.test(numbered), false);
+  // The cached `a:t` is what every native fld carries; a field without one is
+  // a shape PowerPoint never writes, and Windows PowerPoint reads never-written
+  // shapes as damage.
+  assert.match(numbered, /<a:fld id="\{[0-9A-F-]+\}" type="slidenum">[\s\S]*?<a:t>2<\/a:t><\/a:fld>/);
   assert.equal(
     partOf(bytes, "ppt/slides/slide1.xml").includes("slidenum"),
     false,
     "the cover is not numbered",
   );
-  // And the round trip is unchanged by any of it.
+  // The reader skips fld contents, so the cache never reaches the model.
   assert.equal(pptxToText(bytes).text, "## Slide 1\n표지\n\n## Slide 2\n본문\n내용");
 });
 

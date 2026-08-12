@@ -106,6 +106,10 @@ function part(xml: string): Uint8Array {
   return encoder.encode(DECLARATION + xml);
 }
 
+function plainOf(runs: readonly Run[]): string {
+  return runs.map((run) => run.text).join("");
+}
+
 function charIdOf(run: Run): number {
   return (
     (run.bold ? BOLD : 0) | (run.italic ? ITALIC : 0) | (run.code ? CODE : 0) | (run.href ? LINK : 0)
@@ -331,17 +335,49 @@ function sectionProperties(): string {
 }
 
 /**
- * The line layout 한글 recalculates on open.
+ * Characters that take a full em; everything else is counted as half.
  *
- * Present because real files have it and a reader that expects it finds
- * nothing to lay out without one; the numbers are a plausible first line and
- * are replaced the moment the document is opened.
+ * The same approximation the PPTX renderer packs slides with, restated here
+ * because the two units differ — a glyph at `size` centi-points is about
+ * `size` HWPUNIT wide, which is what makes the arithmetic below one line.
  */
-function lineSegment(size: number): string {
+const WIDE =
+  /[ᄀ-ᇿ⺀-〿぀-ヿ㄰-㆏㐀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦]/;
+
+/**
+ * The line layout, one `lineseg` per estimated line.
+ *
+ * 한글 recalculates all of this on open, so the numbers only have to be
+ * plausible — but the *count* is looked at before any recalculation: a wrapped
+ * paragraph carrying a single lineseg is a shape 한글 itself never writes, and
+ * its document checker flags the file as depending on non-standard reflow.
+ * The break positions are estimated with the character-width approximation
+ * above; being a character out moves a boundary 한글 will move back anyway.
+ */
+function lineSegments(text: string, size: number, width: number): string {
+  const lineHeight = Math.round(size * 1.6);
+  // UTF-16 offsets, which is what `textpos` counts.
+  const starts: number[] = [0];
+  let used = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    const advance = character === "\t" ? size * 2 : WIDE.test(character) ? size : size / 2;
+    if (used + advance > width && used > 0) {
+      starts.push(index);
+      used = 0;
+    }
+    used += advance;
+  }
   return (
-    '<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" ' +
-    `vertsize="${size}" textheight="${size}" baseline="${Math.round(size * 0.85)}" ` +
-    `spacing="${Math.round(size * 0.6)}" horzpos="0" horzsize="${TEXT_WIDTH}" flags="393216"/>` +
+    "<hp:linesegarray>" +
+    starts
+      .map(
+        (textpos, line) =>
+          `<hp:lineseg textpos="${textpos}" vertpos="${line * lineHeight}" ` +
+          `vertsize="${size}" textheight="${size}" baseline="${Math.round(size * 0.85)}" ` +
+          `spacing="${Math.round(size * 0.6)}" horzpos="0" horzsize="${width}" flags="393216"/>`,
+      )
+      .join("") +
     "</hp:linesegarray>"
   );
 }
@@ -371,13 +407,19 @@ class Renderer {
     return `<hp:run charPrIDRef="${charId}">${prefix}${extra}${body}</hp:run>`;
   }
 
-  private paragraph(inner: string, paraId: number, size = BODY_SIZE): string {
+  private paragraph(
+    inner: string,
+    paraId: number,
+    size = BODY_SIZE,
+    text = "",
+    width = TEXT_WIDTH,
+  ): string {
     const id = this.paragraphId;
     this.paragraphId += 1;
     return (
       `<hp:p id="${id}" paraPrIDRef="${paraId}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
       inner +
-      lineSegment(size) +
+      lineSegments(text, size, width) +
       "</hp:p>"
     );
   }
@@ -397,6 +439,9 @@ class Renderer {
       const inner = this.paragraph(
         this.runs(runs, header ? TABLE_HEADER_CHAR : undefined),
         align === "right" ? PARA_RIGHT : align === "center" ? PARA_CENTER : PARA_BODY,
+        BODY_SIZE,
+        plainOf(runs),
+        widths[column]!,
       );
       // Zebra counted from the header, so the first data row is the plain one —
       // a tint straight under a filled header reads as a two-row header.
@@ -446,9 +491,10 @@ class Renderer {
           this.runs(block.runs, HEADING_CHAR_BASE + block.level - 1),
           PARA_HEADING,
           HEADING_SIZES[block.level - 1]!,
+          plainOf(block.runs),
         );
       case "paragraph":
-        return this.paragraph(this.runs(block.runs), PARA_BODY);
+        return this.paragraph(this.runs(block.runs), PARA_BODY, BODY_SIZE, plainOf(block.runs));
       case "list": {
         const counters: number[] = [];
         return block.items
@@ -460,22 +506,38 @@ class Renderer {
             return this.paragraph(
               this.runs([{ text: marker }, ...item.runs]),
               PARA_INDENT_BASE + depth,
+              BODY_SIZE,
+              marker + plainOf(item.runs),
+              TEXT_WIDTH - INDENT_STEP * (depth + 1),
             );
           })
           .join("");
       }
       case "code":
         return (block.text === "" ? [""] : block.text.split("\n"))
-          .map((line) => this.paragraph(this.runs([{ text: line, code: true }]), PARA_CODE, CODE_SIZE))
+          .map((line) =>
+            this.paragraph(this.runs([{ text: line, code: true }]), PARA_CODE, CODE_SIZE, line),
+          )
           .join("");
       case "quote":
-        return this.paragraph(this.runs(block.runs, QUOTE_CHAR), PARA_QUOTE);
+        return this.paragraph(
+          this.runs(block.runs, QUOTE_CHAR),
+          PARA_QUOTE,
+          BODY_SIZE,
+          plainOf(block.runs),
+          TEXT_WIDTH - INDENT_STEP,
+        );
       case "table":
         return this.table(block);
       case "rule":
         // OWPML's horizontal rule is a control object; a row of dashes is the
         // same mark on the page with none of the ways that can go wrong.
-        return this.paragraph(this.runs([{ text: "─".repeat(40) }]), PARA_BODY);
+        return this.paragraph(
+          this.runs([{ text: "─".repeat(40) }]),
+          PARA_BODY,
+          BODY_SIZE,
+          "─".repeat(40),
+        );
     }
   }
 

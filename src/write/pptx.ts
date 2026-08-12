@@ -100,6 +100,17 @@ const TITLE_RULE = { width: emu(48), height: emu(3), gap: emu(6) };
  * nothing distinguishes one deck's number field from another's.
  */
 const NUMBER_BOX = { width: emu(48), height: emu(16) };
+
+/**
+ * PowerPoint's own default table style, referenced by GUID.
+ *
+ * The GUID names a style built into PowerPoint itself; the `tableStyles.xml`
+ * part this package carries declares it as the default and defines nothing.
+ * That is exactly what PowerPoint writes for a fresh file — a table whose
+ * `tblPr` names no style is a table no native file contains, and Windows
+ * PowerPoint treats several such never-written shapes as damage.
+ */
+const TABLE_STYLE_ID = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
 const NUMBER_FIELD_ID = "{7B4A2F5C-0E31-4C6D-9A2B-51D0C8E3F614}";
 
 /** A line of body text, with the leading that goes with it. */
@@ -536,9 +547,10 @@ class Renderer {
       `<p:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
       `<a:ext cx="${total}" cy="${ROW_HEIGHT * rows.length}"/></p:xfrm>` +
       `<a:graphic><a:graphicData uri="${A}/table"><a:tbl>` +
-      // No `tableStyleId`: a style id names an entry in a `tableStyles.xml` this
-      // package does not carry, and every border below is stated per cell anyway.
-      '<a:tblPr firstRow="1"/>' +
+      // The style id resolves against `tableStyles.xml`; every visible border
+      // is still stated per cell, so the style only supplies what native files
+      // always carry.
+      `<a:tblPr firstRow="1"><a:tableStyleId>${TABLE_STYLE_ID}</a:tableStyleId></a:tblPr>` +
       `<a:tblGrid>${widths.map((width) => `<a:gridCol w="${width}"/>`).join("")}</a:tblGrid>` +
       body +
       "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"
@@ -555,7 +567,7 @@ class Renderer {
    * paragraph it leaves behind lands at the end of the slide, where `normalize`
    * drops it.
    */
-  private slideNumber(): string {
+  private slideNumber(ordinal: number): string {
     const id = this.nextId;
     this.nextId += 1;
     const box = {
@@ -574,6 +586,9 @@ class Renderer {
       `<a:fld id="${NUMBER_FIELD_ID}" type="slidenum">` +
       `<a:rPr lang="en-US" sz="${centiPoints(DECK.caption)}">` +
       `<a:solidFill><a:srgbClr val="${MUTED}"/></a:solidFill></a:rPr>` +
+      // The cached text every native fld carries. PowerPoint recomputes it on
+      // open; the reader skips fld contents, so it never reaches extraction.
+      `<a:t>${ordinal}</a:t>` +
       "</a:fld></a:p></p:txBody></p:sp>"
     );
   }
@@ -588,10 +603,14 @@ class Renderer {
       `<a:ext cx="${TITLE_RULE.width}" cy="${TITLE_RULE.height}"/></a:xfrm>` +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
       `<a:solidFill><a:srgbClr val="${PALETTE.brandLight}"/></a:solidFill>` +
-      // No `p:txBody`. It is optional on a shape, and an empty one would carry
-      // an empty `a:p` that every text extractor — including this server's own —
-      // reads as a blank line under the title.
-      "</p:spPr></p:sp>"
+      "</p:spPr>" +
+      // The empty body is not optional in practice. `p:txBody` is `minOccurs="0"`
+      // in the schema, and PowerPoint still calls a `p:sp` without one damaged
+      // and offers to repair the file. The empty `a:p` it carries is what every
+      // text extractor reads as a blank line, which is why this shape and the
+      // slide number are written last — `read/pptx.ts` drops trailing blanks.
+      "<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang=\"en-US\"/></a:p></p:txBody>" +
+      "</p:sp>"
     );
   }
 
@@ -601,6 +620,15 @@ class Renderer {
     const titleBox = slide.cover ? COVER_TITLE_BOX : TITLE_BOX;
     const bodyBox = slide.cover ? COVER_BODY_BOX : BODY_BOX;
     const shapes: string[] = [];
+    /**
+     * Shapes that carry no content, appended after everything else.
+     *
+     * Their position on the slide is set by `a:xfrm` rather than by their place
+     * in the tree, so writing them last costs nothing visually — and it is what
+     * keeps their empty paragraphs out of the extracted text, where they would
+     * otherwise land as blank lines in the middle of a slide.
+     */
+    const decorations: string[] = [];
 
     if (slide.title) {
       shapes.push(
@@ -619,7 +647,7 @@ class Renderer {
       if (!slide.cover) {
         // The cover has a tinted ground of its own and does not need the rule;
         // on every other slide this is the whole of the identity.
-        shapes.push(this.accentBar(titleBox.y + titleBox.height + TITLE_RULE.gap));
+        decorations.push(this.accentBar(titleBox.y + titleBox.height + TITLE_RULE.gap));
       }
     }
 
@@ -663,10 +691,9 @@ class Renderer {
     flushText();
 
     // Not on the cover: a title page with a "1" on it is a title page nobody
-    // designed. Last in the tree, so the empty paragraph its field leaves is the
-    // last line of the slide and `normalize` drops it.
+    // designed.
     if (!slide.cover) {
-      shapes.push(this.slideNumber());
+      decorations.push(this.slideNumber(index + 1));
     }
 
     if (shapes.length === 0) {
@@ -681,6 +708,7 @@ class Renderer {
         ),
       );
     }
+    shapes.push(...decorations);
 
     return {
       xml:
@@ -740,6 +768,9 @@ function contentTypesXml(slides: number): string {
       "/ppt/theme/theme1.xml",
       "application/vnd.openxmlformats-officedocument.theme+xml",
     ) +
+    override("/ppt/presProps.xml", `${presentationml}.presProps+xml`) +
+    override("/ppt/viewProps.xml", `${presentationml}.viewProps+xml`) +
+    override("/ppt/tableStyles.xml", `${presentationml}.tableStyles+xml`) +
     override(
       "/docProps/core.xml",
       "application/vnd.openxmlformats-package.core-properties+xml",
@@ -790,6 +821,25 @@ function corePropertiesXml(title: string, created: string): string {
   );
 }
 
+/**
+ * The parts PowerPoint writes into every file and reads back from every file.
+ *
+ * All three are effectively empty — no styles defined, no view state worth
+ * keeping — but their absence is a package shape no native file has ever had,
+ * and Windows PowerPoint reads absence as damage where the Mac build shrugs.
+ */
+function presPropsXml(): string {
+  return `<p:presentationPr xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"/>`;
+}
+
+function viewPropsXml(): string {
+  return `<p:viewPr xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"/>`;
+}
+
+function tableStylesXml(): string {
+  return `<a:tblStyleLst xmlns:a="${A}" def="${TABLE_STYLE_ID}"/>`;
+}
+
 function presentationXml(slides: number): string {
   return (
     `<p:presentation xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}" saveSubsetFonts="1">` +
@@ -809,11 +859,18 @@ function presentationXml(slides: number): string {
 }
 
 function presentationRelsXml(slides: number): string {
+  // The theme is reachable through the master, but native files relate it from
+  // the presentation part as well, and the other three live only here.
+  const next = slides + 2;
   return relationships([
     relationship("rId1", SLIDE_MASTER_TYPE, "slideMasters/slideMaster1.xml"),
     ...Array.from({ length: slides }, (_, index) =>
       relationship(`rId${index + 2}`, SLIDE_TYPE, `slides/slide${index + 1}.xml`),
     ),
+    relationship(`rId${next}`, THEME_TYPE, "theme/theme1.xml"),
+    relationship(`rId${next + 1}`, `${R}/presProps`, "presProps.xml"),
+    relationship(`rId${next + 2}`, `${R}/viewProps`, "viewProps.xml"),
+    relationship(`rId${next + 3}`, `${R}/tableStyles`, "tableStyles.xml"),
   ]);
 }
 
@@ -912,6 +969,11 @@ function slideMasterXml(): string {
     '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
     '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +
     '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>' +
+    // The top of the inheritance chain. A slide's placeholder points at its
+    // layout's, and the layout's at these — native masters always carry them,
+    // and a chain that ends nowhere is another shape no real file has.
+    layoutPlaceholder(2, "Title Placeholder 1", '<p:ph type="title"/>', TITLE_BOX) +
+    layoutPlaceholder(3, "Body Placeholder 2", '<p:ph type="body" idx="1"/>', BODY_BOX) +
     "</p:spTree></p:cSld>" +
     '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" ' +
     'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" ' +
@@ -969,6 +1031,9 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     "ppt/presentation.xml": part(presentationXml(slides.length)),
     "ppt/_rels/presentation.xml.rels": part(presentationRelsXml(slides.length)),
     "ppt/theme/theme1.xml": part(themeXml()),
+    "ppt/presProps.xml": part(presPropsXml()),
+    "ppt/viewProps.xml": part(viewPropsXml()),
+    "ppt/tableStyles.xml": part(tableStylesXml()),
     "ppt/slideMasters/slideMaster1.xml": part(slideMasterXml()),
     "ppt/slideMasters/_rels/slideMaster1.xml.rels": part(slideMasterRelsXml()),
     "ppt/slideLayouts/slideLayout1.xml": part(slideLayoutXml(true)),
