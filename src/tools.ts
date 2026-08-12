@@ -18,7 +18,6 @@ import { parseMarkdown, type Block, type MarkdownDocument } from "./markdown.js"
 import { readDocument } from "./read/document.js";
 import { loadSource } from "./source.js";
 import { safeFilename } from "./filename.js";
-import { SERVER_VERSION } from "./version.js";
 import { renderDocx } from "./write/docx.js";
 import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
@@ -258,7 +257,6 @@ async function renderTo(
     bytes = renderHwpx(document, {
       title: meta.title,
       created: meta.created.toISOString(),
-      application: SERVER_VERSION,
     });
   } else if (format === "pptx") {
     const rendered = renderPptx(document, {

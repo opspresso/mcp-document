@@ -49,6 +49,7 @@ import {
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { DOC, rgbOf, type ColourName } from "./theme.js";
+import { PRODUCER } from "../version.js";
 
 /** A4 in points, and a 2cm margin. */
 const PAGE_WIDTH = 595.28;
@@ -605,7 +606,10 @@ export async function renderPdf(
     mono: await pdf.embedFont(StandardFonts.Courier),
   };
   pdf.setTitle(options.title);
-  pdf.setProducer("mcp-document");
+  // Both fields, because readers disagree about which one they show: Preview
+  // reads `Creator`, most others `Producer`.
+  pdf.setProducer(PRODUCER);
+  pdf.setCreator(PRODUCER);
   pdf.setCreationDate(options.created);
   pdf.setModificationDate(options.created);
 

@@ -40,6 +40,7 @@ import { buildZip } from "../zip.js";
 import type { Align, Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { CHART, DECK, PALETTE, centiPoints, emu } from "./theme.js";
+import { PRODUCER } from "../version.js";
 
 const DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
@@ -743,7 +744,29 @@ function contentTypesXml(slides: number): string {
       "/docProps/core.xml",
       "application/vnd.openxmlformats-package.core-properties+xml",
     ) +
+    override(
+      "/docProps/app.xml",
+      "application/vnd.openxmlformats-officedocument.extended-properties+xml",
+    ) +
     "</Types>"
+  );
+}
+
+/**
+ * `docProps/app.xml`, whose only job here is to say what wrote the file.
+ *
+ * OOXML keeps the producer separate from the core properties: `dc:title` and the
+ * dates are the document's, `<Application>` is the tool's. Word fills in a dozen
+ * more fields — word counts, template names — and none of them are things this
+ * renderer knows or a reader needs. When somebody turns up with a file that
+ * renders oddly, this is the line that says which release made it.
+ */
+function appPropertiesXml(): string {
+  return (
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ' +
+    'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">' +
+    `<Application>${escapeXml(PRODUCER)}</Application>` +
+    "</Properties>"
   );
 }
 
@@ -751,6 +774,7 @@ function packageRelsXml(): string {
   return relationships([
     relationship("rId1", `${R}/officeDocument`, "ppt/presentation.xml"),
     relationship("rId2", `${RELATIONSHIPS}/metadata/core-properties`, "docProps/core.xml"),
+    relationship("rId3", `${R}/extended-properties`, "docProps/app.xml"),
   ]);
 }
 
@@ -941,6 +965,7 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     "[Content_Types].xml": part(contentTypesXml(slides.length)),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
+    "docProps/app.xml": part(appPropertiesXml()),
     "ppt/presentation.xml": part(presentationXml(slides.length)),
     "ppt/_rels/presentation.xml.rels": part(presentationRelsXml(slides.length)),
     "ppt/theme/theme1.xml": part(themeXml()),

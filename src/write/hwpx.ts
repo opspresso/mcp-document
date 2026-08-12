@@ -30,6 +30,7 @@ import { buildZip, stored } from "../zip.js";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { DOC, centiPoints, hashed } from "./theme.js";
+import { PRODUCER, SERVER_NAME, SERVER_VERSION } from "../version.js";
 
 const DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
@@ -502,12 +503,14 @@ function sectionXml(document: MarkdownDocument): string {
 
 /* --------------------------------------------------------------- packaging */
 
-function versionXml(version: string): string {
-  // `tagetApplication` is spelled that way in the format itself.
+function versionXml(): string {
+  // `tagetApplication` is spelled that way in the format itself. OWPML keeps the
+  // producer's name and its version in separate attributes, which is why this is
+  // the one format that does not take `PRODUCER` whole.
   return (
     `<hv:HCFVersion xmlns:hv="${NS.version}" tagetApplication="WORDPROCESSOR" major="5" minor="1" ` +
-    `micro="1" buildNumber="0" os="1" xmlVersion="1.4" application="mcp-document" ` +
-    `appVersion="${escapeXml(version)}"/>`
+    `micro="1" buildNumber="0" os="1" xmlVersion="1.4" application="${escapeXml(SERVER_NAME)}" ` +
+    `appVersion="${escapeXml(SERVER_VERSION)}"/>`
   );
 }
 
@@ -545,7 +548,7 @@ function contentHpf(title: string, created: string): string {
     "<opf:metadata>" +
     `<opf:title>${escapeXml(title)}</opf:title>` +
     "<opf:language>ko</opf:language>" +
-    '<opf:meta name="creator" content="mcp-document"/>' +
+    `<opf:meta name="creator" content="${escapeXml(PRODUCER)}"/>` +
     `<opf:meta name="CreatedDate" content="${escapeXml(created)}"/>` +
     "</opf:metadata>" +
     "<opf:manifest>" +
@@ -575,8 +578,6 @@ export interface HwpxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
-  /** This server's version, for the file's own record of what wrote it. */
-  application: string;
 }
 
 export function renderHwpx(document: MarkdownDocument, options: HwpxOptions): Uint8Array {
@@ -584,7 +585,7 @@ export function renderHwpx(document: MarkdownDocument, options: HwpxOptions): Ui
     // First, and stored rather than deflated: the same rule ODF packaging uses,
     // and a reader that checks for it checks at a fixed offset.
     mimetype: stored(encoder.encode("application/hwp+zip")),
-    "version.xml": part(versionXml(options.application)),
+    "version.xml": part(versionXml()),
     "settings.xml": part(settingsXml()),
     "META-INF/container.xml": part(containerXml()),
     "META-INF/manifest.xml": part(manifestXml()),

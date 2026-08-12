@@ -17,7 +17,7 @@ import { detect } from "../detect.js";
 import { listEntries, readEntries } from "../zip.js";
 import { renderHwpx } from "./hwpx.js";
 
-const OPTIONS = { title: "test", created: "2026-08-05T00:00:00Z", application: "0.1.0" };
+const OPTIONS = { title: "test", created: "2026-08-05T00:00:00Z" };
 
 function build(markdown: string): Uint8Array {
   return renderHwpx(parseMarkdown(markdown), OPTIONS);
@@ -148,6 +148,14 @@ test("XML metacharacters in the text do not become markup", () => {
 test("the title lands in the package metadata, escaped", () => {
   const bytes = renderHwpx(parseMarkdown("본문"), { ...OPTIONS, title: "A & B <보고서>" });
   assert.match(partOf(bytes, "Contents/content.hpf"), /<opf:title>A &amp; B &lt;보고서&gt;<\/opf:title>/);
+});
+
+test("the file records what wrote it", () => {
+  // OWPML keeps the name and the version apart, which is why this is the one
+  // format that does not take the single producer string.
+  const version = partOf(build("본문"), "version.xml");
+  assert.match(version, /application="mcp-document"/);
+  assert.match(version, /appVersion="\d+\.\d+\.\d+"/);
 });
 
 test("the same input twice produces the same bytes", () => {

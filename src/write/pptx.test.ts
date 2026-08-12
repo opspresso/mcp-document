@@ -42,6 +42,7 @@ test("a deck has the scaffolding its content types declare", () => {
   assert.deepEqual(names, [
     "[Content_Types].xml",
     "_rels/.rels",
+    "docProps/app.xml",
     "docProps/core.xml",
     "ppt/_rels/presentation.xml.rels",
     "ppt/presentation.xml",
@@ -235,6 +236,10 @@ test("the title lands in the document properties, escaped", () => {
   const core = partOf(bytes, "docProps/core.xml");
   assert.ok(core.includes("<dc:title>A &amp; B &lt;deck&gt;</dc:title>"));
   assert.ok(core.includes(CREATED));
+});
+
+test("the file records what wrote it", () => {
+  assert.match(partOf(build("## s"), "docProps/app.xml"), /<Application>mcp-document \d+\.\d+\.\d+<\/Application>/);
 });
 
 test("the same input twice produces the same bytes", () => {

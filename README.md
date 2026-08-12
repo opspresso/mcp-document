@@ -358,6 +358,21 @@ unprivileged `node` user and needs no writable volume:
     npm run build        # tsc -p tsconfig.build.json (tests excluded from dist)
     npm start            # node dist/server.js, after a build
 
+## Release
+
+    npm version minor -m "chore: release %s"    # or patch / major
+    git push && git push --tags
+
+The version is stated in two places — `package.json`, which builds the image, and
+`src/version.ts`, which is what a client is told on `initialize` and what every
+produced document records as its producer. `npm version` keeps them in step: its
+`version` lifecycle hook runs `scripts/sync-version.mjs` and stages the result,
+so the release commit carries both. `src/version.test.ts` is the backstop for a
+release made some other way.
+
+Pushing the tag is what runs the release workflow: verify, then the ECR and GHCR
+images, the GitHub release notes, and the GitOps dispatch.
+
 Tests cover the pure decisions — format detection, the zip budget, the HWP
 record walk and its control-character table, the spreadsheet's column
 arithmetic and row budget, RTF's destinations and escapes, the Markdown parser,

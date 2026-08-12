@@ -164,6 +164,16 @@ test("a word wider than the page gets its own line rather than an endless loop",
   assert.match(text, /end/);
 });
 
+test("the file records what wrote it", async () => {
+  const { bytes } = await renderPdf(parseMarkdown("body"), { title: "t", created: CREATED });
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { info } = (await pdf.getMetadata()) as unknown as { info: Record<string, unknown> };
+  // Both fields: readers disagree about which they show.
+  assert.match(String(info.Producer), /^mcp-document \d+\.\d+\.\d+$/);
+  assert.match(String(info.Creator), /^mcp-document \d+\.\d+\.\d+$/);
+});
+
 test("an empty document is still a valid PDF", async () => {
   const { bytes, pages } = await renderPdf({ blocks: [] }, { title: "empty", created: CREATED });
   assert.equal(pages, 1);

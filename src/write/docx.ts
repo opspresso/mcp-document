@@ -26,6 +26,7 @@ import { buildZip } from "../zip.js";
 import type { Align, Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { DOC, PALETTE, halfPoints } from "./theme.js";
+import { PRODUCER } from "../version.js";
 
 /** A4, in twentieths of a point, with a 2.5cm margin. */
 const PAGE = '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/>';
@@ -65,12 +66,6 @@ function textElement(value: string): string {
     .join("<w:br/>");
 }
 
-/**
- * `colour` overrides whatever the run's styles would have given it, and exists
- * for the one case a `Run` cannot express: text on a brand-filled table header,
- * which has to be white regardless of what it is. Putting it in the AST would
- * make colour a property of the document rather than of the rendering.
- */
 /** A column's alignment as `w:jc`. Left is Word's default and needs no element. */
 function justification(align: Align | undefined): string {
   if (align === "right") {
@@ -79,6 +74,12 @@ function justification(align: Align | undefined): string {
   return align === "center" ? '<w:jc w:val="center"/>' : "";
 }
 
+/**
+ * `colour` overrides whatever the run's styles would have given it, and exists
+ * for the one case a `Run` cannot express: text on a brand-filled table header,
+ * which has to be white regardless of what it is. Putting it in the AST would
+ * make colour a property of the document rather than of the rendering.
+ */
 function runProperties(run: Run, colour?: string): string {
   const parts = [
     run.bold ? "<w:b/>" : "",
@@ -315,6 +316,24 @@ function stylesXml(): string {
   );
 }
 
+/**
+ * `docProps/app.xml`, whose only job here is to say what wrote the file.
+ *
+ * OOXML keeps the producer separate from the core properties: `dc:title` and the
+ * dates are the document's, `<Application>` is the tool's. Word fills in a dozen
+ * more fields — word counts, template names — and none of them are things this
+ * renderer knows or a reader needs. When somebody turns up with a file that
+ * renders oddly, this is the line that says which release made it.
+ */
+function appPropertiesXml(): string {
+  return (
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ' +
+    'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">' +
+    `<Application>${escapeXml(PRODUCER)}</Application>` +
+    "</Properties>"
+  );
+}
+
 function contentTypesXml(): string {
   return (
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
@@ -324,6 +343,7 @@ function contentTypesXml(): string {
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
+    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>' +
     "</Types>"
   );
 }
@@ -333,6 +353,7 @@ function packageRelsXml(): string {
     `<Relationships xmlns="${RELATIONSHIPS}">` +
     `<Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/>` +
     `<Relationship Id="rId2" Type="${RELATIONSHIPS}/metadata/core-properties" Target="docProps/core.xml"/>` +
+    `<Relationship Id="rId3" Type="${R}/extended-properties" Target="docProps/app.xml"/>` +
     "</Relationships>"
   );
 }
@@ -378,6 +399,7 @@ export function renderDocx(document: MarkdownDocument, options: DocxOptions): Ui
     "[Content_Types].xml": part(contentTypesXml()),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
+    "docProps/app.xml": part(appPropertiesXml()),
     "word/document.xml": part(body),
     "word/_rels/document.xml.rels": part(documentRelsXml(renderer.linkTargets())),
     "word/styles.xml": part(stylesXml()),

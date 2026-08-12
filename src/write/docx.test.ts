@@ -38,6 +38,7 @@ test("a document has exactly the parts its content types declare", () => {
   assert.deepEqual(names, [
     "[Content_Types].xml",
     "_rels/.rels",
+    "docProps/app.xml",
     "docProps/core.xml",
     "word/_rels/document.xml.rels",
     "word/document.xml",
@@ -50,6 +51,7 @@ test("a document has exactly the parts its content types declare", () => {
     "/word/styles.xml",
     "/word/footer1.xml",
     "/docProps/core.xml",
+    "/docProps/app.xml",
   ]) {
     assert.ok(types.includes(declared), `content types should name ${declared}`);
   }
@@ -151,6 +153,12 @@ test("the title lands in the document properties, escaped", () => {
   const core = partOf(bytes, "docProps/core.xml");
   assert.ok(core.includes("<dc:title>A &amp; B &lt;report&gt;</dc:title>"));
   assert.ok(core.includes(CREATED));
+});
+
+test("the file records what wrote it", () => {
+  // Which release made a document is the first question asked about one that
+  // renders oddly, and OOXML has a field for exactly that.
+  assert.match(partOf(build("body"), "docProps/app.xml"), /<Application>mcp-document \d+\.\d+\.\d+<\/Application>/);
 });
 
 test("the same input twice produces the same bytes", () => {
