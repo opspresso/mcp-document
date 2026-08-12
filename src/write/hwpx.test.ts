@@ -82,19 +82,43 @@ test("a table round-trips, and every cell holds a paragraph", () => {
 test("every id a paragraph or run refers to exists in the header", () => {
   // The reference that does not resolve is the failure mode of this format:
   // nothing in the body says what a style is, only which numbered one it wants.
-  const bytes = build("# 제목\n\n**굵게** *기울임* `코드` [링크](https://example.com)\n\n> 인용\n\n- 목록\n\n```\ncode\n```");
+  const bytes = build(
+    "# 제목\n\n**굵게** *기울임* `코드` [링크](https://example.com)\n\n> 인용\n\n- 목록\n\n" +
+      "| 이름 | 값 |\n|:---:|---:|\n| a | 1 |\n| b | 2 |\n\n```\ncode\n```",
+  );
   const header = partOf(bytes, "Contents/header.xml");
   const section = partOf(bytes, "Contents/section0.xml");
   const declared = (xml: string, pattern: RegExp): Set<string> =>
     new Set([...xml.matchAll(pattern)].map((match) => match[1]!));
   const charIds = declared(header, /<hh:charPr id="(\d+)"/g);
   const paraIds = declared(header, /<hh:paraPr id="(\d+)"/g);
+  const fillIds = declared(header, /<hh:borderFill id="(\d+)"/g);
   for (const id of declared(section, /charPrIDRef="(\d+)"/g)) {
     assert.ok(charIds.has(id), `charPr ${id} is referenced but not declared`);
   }
   for (const id of declared(section, /paraPrIDRef="(\d+)"/g)) {
     assert.ok(paraIds.has(id), `paraPr ${id} is referenced but not declared`);
   }
+  // Border fills are referenced from the header's own paragraph properties as
+  // well as from the body's cells, so both sides are checked against the list.
+  for (const id of declared(`${section}${header}`, /borderFillIDRef="(\d+)"/g)) {
+    assert.ok(fillIds.has(id), `borderFill ${id} is referenced but not declared`);
+  }
+});
+
+test("a column asked to be centred or set right says so in its paragraph properties", () => {
+  const bytes = build("| a | n |\n|:---:|---:|\n| x | 42 |");
+  const header = partOf(bytes, "Contents/header.xml");
+  const section = partOf(bytes, "Contents/section0.xml");
+  // The alignment lives in a `paraPr`, so the body only names an id — the test
+  // has to follow the reference to see which one it got.
+  const used = [...section.matchAll(/paraPrIDRef="(\d+)"/g)].map((match) => match[1]!);
+  const alignmentOf = (id: string): string =>
+    new RegExp(`<hh:paraPr id="${id}"[^>]*>\\s*<hh:align horizontal="([A-Z]+)"`).exec(header)?.[1] ??
+    "";
+  const alignments = new Set(used.map(alignmentOf));
+  assert.ok(alignments.has("CENTER"), "the first column asked to be centred");
+  assert.ok(alignments.has("RIGHT"), "the second asked to be set right");
 });
 
 test("the section properties are written exactly once", () => {

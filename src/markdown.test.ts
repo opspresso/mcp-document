@@ -116,6 +116,21 @@ test("a table needs its divider, and its cells are parsed as inline", () => {
   assert.deepEqual(parsed[0].rows[0]?.[0], [{ text: "a", bold: true }]);
 });
 
+test("the divider's colons decide how each column is set", () => {
+  const parsed = blocks("| a | b | c | d |\n|---|:---|:---:|---:|\n| 1 | 2 | 3 | 4 |");
+  assert.deepEqual(
+    parsed[0]?.kind === "table" ? parsed[0].align : [],
+    ["left", "left", "center", "right"],
+  );
+});
+
+test("a divider with no colons leaves every column flush left", () => {
+  // Which is what these tables have always rendered as, so nothing written
+  // before alignment existed moves.
+  const parsed = blocks("| a | b |\n|---|---|\n| 1 | 2 |");
+  assert.deepEqual(parsed[0]?.kind === "table" ? parsed[0].align : [], ["left", "left"]);
+});
+
 test("a pipe row with no divider under it is a paragraph, not a table", () => {
   const parsed = blocks("a | b | c");
   assert.equal(parsed[0]?.kind, "paragraph");

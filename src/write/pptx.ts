@@ -37,8 +37,9 @@
 
 import { escapeXml } from "../xml.js";
 import { buildZip } from "../zip.js";
-import type { Block, MarkdownDocument, Run } from "../markdown.js";
+import type { Align, Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { CHART, DECK, PALETTE, centiPoints, emu } from "./theme.js";
 
 const DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
@@ -66,18 +67,39 @@ const COVER_TITLE_BOX = { y: 2133600, height: 1371600 };
 const COVER_BODY_BOX = { y: 3657600, height: 1371600 };
 
 /** Hundredths of a point, which is what `sz` is in. */
-const TITLE_SIZE = 3200;
-const COVER_TITLE_SIZE = 4400;
-const BODY_SIZE = 1800;
-const CODE_SIZE = 1400;
+const TITLE_SIZE = centiPoints(DECK.title);
+const COVER_TITLE_SIZE = centiPoints(DECK.coverTitle);
+const BODY_SIZE = centiPoints(DECK.body);
+const CODE_SIZE = centiPoints(DECK.code);
 /** Headings 3 to 6, which stay in the body rather than opening a slide. */
-const SUBHEADING_SIZES = [2200, 2000, 1800, 1800];
+const SUBHEADING_SIZES = DECK.subheadings.map(centiPoints);
 
-const INK = "212121";
-const LINK_COLOUR = "0563C1";
-const MUTED = "595959";
-const BORDER = "BFBFBF";
-const HEADER_FILL = "F2F2F2";
+const INK = PALETTE.ink;
+const LINK_COLOUR = PALETTE.brandDeep;
+const MUTED = PALETTE.inkMuted;
+const BORDER = PALETTE.rule;
+const HEADER_FILL = PALETTE.brand;
+
+/**
+ * The bar under a slide's title.
+ *
+ * This is where the console's lavender page ended up. A deck is the one output
+ * that can afford a full-bleed tint — a slide is shown, not printed by the
+ * hundred — so the cover and section slides take the tint, and every ordinary
+ * slide gets this instead: a short brand rule under the title, which says the
+ * same thing without putting a colour field behind every bullet.
+ */
+const TITLE_RULE = { width: emu(48), height: emu(3), gap: emu(6) };
+
+/**
+ * The slide-number box, sitting in the bottom margin.
+ *
+ * The field id is a fixed GUID rather than a generated one, for the reason the
+ * created date is passed in: the bytes have to follow from the input alone, and
+ * nothing distinguishes one deck's number field from another's.
+ */
+const NUMBER_BOX = { width: emu(48), height: emu(16) };
+const NUMBER_FIELD_ID = "{7B4A2F5C-0E31-4C6D-9A2B-51D0C8E3F614}";
 
 /** A line of body text, with the leading that goes with it. */
 const LINE_HEIGHT = Math.round(((BODY_SIZE * 1.35) / 100) * EMU_PER_POINT);
@@ -145,6 +167,8 @@ interface Style {
   indent: number;
   /** Space above, in hundredths of a point. */
   before?: number;
+  /** Only a table cell sets this; body text is always flush left. */
+  align?: Align;
 }
 
 /**
@@ -156,7 +180,7 @@ interface Style {
  */
 type Piece =
   | { kind: "text"; runs: Run[]; style: Style }
-  | { kind: "table"; header: Run[][]; rows: Run[][][] };
+  | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] };
 
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
@@ -172,6 +196,7 @@ function piecesOf(block: Block): Piece[] {
           style: {
             size: SUBHEADING_SIZES[Math.min(block.level, 6) - 3] ?? BODY_SIZE,
             bold: true,
+            colour: PALETTE.brand,
             indent: 0,
             before: 600,
           },
@@ -209,7 +234,7 @@ function piecesOf(block: Block): Piece[] {
         },
       ];
     case "table":
-      return [{ kind: "table", header: block.header, rows: block.rows }];
+      return [{ kind: "table", header: block.header, rows: block.rows, align: block.align }];
     case "rule":
       // A drawn line would be a shape of its own in the middle of a text box,
       // which is a second layout problem for a mark this small. The same row of
@@ -242,8 +267,8 @@ function splitTable(
     return undefined;
   }
   return {
-    head: { kind: "table", header: piece.header, rows: piece.rows.slice(0, rows) },
-    rest: { kind: "table", header: piece.header, rows: piece.rows.slice(rows) },
+    head: { kind: "table", header: piece.header, rows: piece.rows.slice(0, rows), align: piece.align },
+    rest: { kind: "table", header: piece.header, rows: piece.rows.slice(rows), align: piece.align },
   };
 }
 
@@ -410,8 +435,9 @@ class Renderer {
 
   private paragraph(runs: readonly Run[], style: Style): string {
     const marginLeft = style.indent * INDENT_EMU;
+    const algn = style.align === "right" ? "r" : style.align === "center" ? "ctr" : "l";
     const properties =
-      `<a:pPr marL="${marginLeft}" indent="0" algn="l">` +
+      `<a:pPr marL="${marginLeft}" indent="0" algn="${algn}">` +
       (style.before ? `<a:spcBef><a:spcPts val="${style.before}"/></a:spcBef>` : "") +
       // Every list marker here is literal text, as in the other three renderers,
       // so PowerPoint's own bullet has to be turned off or every line gets two.
@@ -460,24 +486,35 @@ class Renderer {
     const id = this.nextId;
     this.nextId += 1;
 
+    // Horizontal rules only. A full grid boxes every number in, and the eye
+    // reads a table by its rows — the column gaps do what the vertical lines
+    // would have.
     const border = (edge: string): string =>
       `<a:${edge} w="12700" cap="flat" cmpd="sng" algn="ctr">` +
       `<a:solidFill><a:srgbClr val="${BORDER}"/></a:solidFill>` +
       `<a:prstDash val="solid"/></a:${edge}>`;
-    const cell = (cells: readonly Run[][], column: number, header: boolean): string => {
-      const runs = (cells[column] ?? []).map((run) => (header ? { ...run, bold: true } : run));
+    const noBorder = (edge: string): string => `<a:${edge}><a:noFill/></a:${edge}>`;
+    const cell = (cells: readonly Run[][], column: number, row: number): string => {
+      const header = row === 0;
+      const runs = cells[column] ?? [];
+      // Zebra counted from the header, so the first data row is the plain one.
+      const fill = header ? HEADER_FILL : row % 2 === 0 ? PALETTE.brandTint : undefined;
       // A cell with no paragraph in it is what makes PowerPoint call the file
       // corrupt — the same trap `w:tc` has in DOCX.
       return (
         "<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>" +
-        this.paragraph(runs, BODY_STYLE) +
+        this.paragraph(runs, {
+          ...BODY_STYLE,
+          align: piece.align[column],
+          ...(header ? { bold: true, colour: PALETTE.onBrand } : {}),
+        }) +
         "</a:txBody>" +
         '<a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">' +
-        border("lnL") +
-        border("lnR") +
+        noBorder("lnL") +
+        noBorder("lnR") +
         border("lnT") +
         border("lnB") +
-        (header ? `<a:solidFill><a:srgbClr val="${HEADER_FILL}"/></a:solidFill>` : "") +
+        (fill ? `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>` : "") +
         "</a:tcPr></a:tc>"
       );
     };
@@ -486,7 +523,7 @@ class Renderer {
       .map(
         (cells, index) =>
           `<a:tr h="${ROW_HEIGHT}">` +
-          Array.from({ length: columns }, (_, column) => cell(cells, column, index === 0)).join("") +
+          Array.from({ length: columns }, (_, column) => cell(cells, column, index)).join("") +
           "</a:tr>",
       )
       .join("");
@@ -507,6 +544,56 @@ class Renderer {
     );
   }
 
+  /**
+   * The slide number, bottom right.
+   *
+   * A `slidenum` field rather than a digit, so a deck that gets a slide inserted
+   * renumbers itself. It carries **no `a:t`** — the element is optional, and the
+   * literal it would hold is what every text extractor picks up: this server's
+   * own reader would then return "7" as a line of the slide's content. The empty
+   * paragraph it leaves behind lands at the end of the slide, where `normalize`
+   * drops it.
+   */
+  private slideNumber(): string {
+    const id = this.nextId;
+    this.nextId += 1;
+    const box = {
+      x: SLIDE_WIDTH - SIDE_MARGIN - NUMBER_BOX.width,
+      y: SLIDE_HEIGHT - SIDE_MARGIN,
+      width: NUMBER_BOX.width,
+      height: NUMBER_BOX.height,
+    };
+    return (
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Slide Number"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
+      `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
+      '<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0"/><a:lstStyle/>' +
+      '<a:p><a:pPr algn="r"/>' +
+      `<a:fld id="${NUMBER_FIELD_ID}" type="slidenum">` +
+      `<a:rPr lang="en-US" sz="${centiPoints(DECK.caption)}">` +
+      `<a:solidFill><a:srgbClr val="${MUTED}"/></a:solidFill></a:rPr>` +
+      "</a:fld></a:p></p:txBody></p:sp>"
+    );
+  }
+
+  /** The short brand rule under a slide's title. A shape, because a slide has no borders. */
+  private accentBar(y: number): string {
+    const id = this.nextId;
+    this.nextId += 1;
+    return (
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Accent ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
+      `<a:ext cx="${TITLE_RULE.width}" cy="${TITLE_RULE.height}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      `<a:solidFill><a:srgbClr val="${PALETTE.brandLight}"/></a:solidFill>` +
+      // No `p:txBody`. It is optional on a shape, and an empty one would carry
+      // an empty `a:p` that every text extractor — including this server's own —
+      // reads as a blank line under the title.
+      "</p:spPr></p:sp>"
+    );
+  }
+
   /** One slide, and the hyperlink targets it turned out to need. */
   slide(slide: Slide, index: number): { xml: string; links: readonly string[] } {
     this.reset();
@@ -522,11 +609,17 @@ class Renderer {
           this.paragraph(slide.title, {
             size: slide.cover ? COVER_TITLE_SIZE : TITLE_SIZE,
             bold: true,
+            colour: PALETTE.brand,
             indent: 0,
           }),
           '<p:ph type="title"/>',
         ),
       );
+      if (!slide.cover) {
+        // The cover has a tinted ground of its own and does not need the rule;
+        // on every other slide this is the whole of the identity.
+        shapes.push(this.accentBar(titleBox.y + titleBox.height + TITLE_RULE.gap));
+      }
     }
 
     // Runs of text sit in one box; a table is a frame of its own, so the body is
@@ -568,6 +661,13 @@ class Renderer {
     }
     flushText();
 
+    // Not on the cover: a title page with a "1" on it is a title page nobody
+    // designed. Last in the tree, so the empty paragraph its field leaves is the
+    // last line of the slide and `normalize` drops it.
+    if (!slide.cover) {
+      shapes.push(this.slideNumber());
+    }
+
     if (shapes.length === 0) {
       // A slide with no shape at all opens, but there is nothing to select and
       // nothing in the outline. An empty body box is the honest empty slide.
@@ -583,7 +683,14 @@ class Renderer {
 
     return {
       xml:
-        `<p:sld xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld><p:spTree>` +
+        `<p:sld xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld>` +
+        // The console's lavender, kept for the one slide that can carry a
+        // full-bleed field without costing anything: the cover.
+        (slide.cover
+          ? `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${PALETTE.surfaceTint}"/></a:solidFill>` +
+            "<a:effectLst/></p:bgPr></p:bg>"
+          : "") +
+        "<p:spTree>" +
         '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
         '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +
         '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>' +
@@ -696,7 +803,7 @@ function presentationRelsXml(slides: number): string {
  * machine beats one picked here from a font that may not be installed.
  */
 function themeXml(): string {
-  const accents = ["4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47"];
+  const accents = CHART.slice(0, 6);
   const line = (width: number): string =>
     `<a:ln w="${width}" cap="flat" cmpd="sng" algn="ctr">` +
     '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>' +
@@ -706,15 +813,15 @@ function themeXml(): string {
     `<a:theme xmlns:a="${A}" name="Office">` +
     "<a:themeElements>" +
     '<a:clrScheme name="Office">' +
-    '<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>' +
-    '<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>' +
-    '<a:dk2><a:srgbClr val="44546A"/></a:dk2>' +
-    '<a:lt2><a:srgbClr val="E7E6E6"/></a:lt2>' +
+    `<a:dk1><a:sysClr val="windowText" lastClr="${PALETTE.ink}"/></a:dk1>` +
+    `<a:lt1><a:sysClr val="window" lastClr="${PALETTE.onBrand}"/></a:lt1>` +
+    `<a:dk2><a:srgbClr val="${PALETTE.brand}"/></a:dk2>` +
+    `<a:lt2><a:srgbClr val="${PALETTE.brandTint}"/></a:lt2>` +
     accents
       .map((colour, index) => `<a:accent${index + 1}><a:srgbClr val="${colour}"/></a:accent${index + 1}>`)
       .join("") +
     `<a:hlink><a:srgbClr val="${LINK_COLOUR}"/></a:hlink>` +
-    '<a:folHlink><a:srgbClr val="954F72"/></a:folHlink>' +
+    `<a:folHlink><a:srgbClr val="${PALETTE.brandDeep}"/></a:folHlink>` +
     "</a:clrScheme>" +
     '<a:fontScheme name="Office">' +
     '<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +

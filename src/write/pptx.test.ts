@@ -145,6 +145,33 @@ test("a table becomes a table, and every cell has a paragraph in it", () => {
   assert.equal(/<a:tc>(?:(?!<a:p[ />]).)*<\/a:tc>/s.test(slide), false);
 });
 
+test("a column asked to be set right is set right", () => {
+  // Scoped to the table: the slide-number field is right-aligned too, and
+  // counting it would make this pass for the wrong reason.
+  const tableOf = (markdown: string): string =>
+    /<a:tbl>[\s\S]*<\/a:tbl>/.exec(partOf(build(markdown), "ppt/slides/slide1.xml"))?.[0] ?? "";
+  const aligned = tableOf("## s\n\n| a | n |\n|---|---:|\n| x | 42 |");
+  assert.equal(aligned.match(/algn="r"/g)?.length, 2, "header and cell both move");
+  const plain = tableOf("## s\n\n| a | n |\n|---|---|\n| x | 42 |");
+  assert.equal(plain.includes('algn="r"'), false);
+});
+
+test("a slide is numbered by a field that carries no text of its own", () => {
+  const bytes = build("# 표지\n\n## 본문\n\n내용");
+  const numbered = partOf(bytes, "ppt/slides/slide2.xml");
+  assert.match(numbered, /<a:fld id="\{[0-9A-F-]+\}" type="slidenum">/);
+  // No `a:t` inside the field: the literal would be picked up by every text
+  // extractor, including this server's own reader.
+  assert.equal(/<a:fld[^>]*>[\s\S]*?<a:t>/.test(numbered), false);
+  assert.equal(
+    partOf(bytes, "ppt/slides/slide1.xml").includes("slidenum"),
+    false,
+    "the cover is not numbered",
+  );
+  // And the round trip is unchanged by any of it.
+  assert.equal(pptxToText(bytes).text, "## Slide 1\n표지\n\n## Slide 2\n본문\n내용");
+});
+
 test("lists carry their markers, and a nested list numbers from one", () => {
   assert.equal(roundTrip("## s\n\n- one\n- two"), "## Slide 1\ns\n• one\n• two");
   assert.equal(

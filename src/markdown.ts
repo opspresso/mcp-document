@@ -39,13 +39,25 @@ export interface ListItem {
   depth: number;
 }
 
+/**
+ * A column's alignment, which GFM writes into the divider row as `---:` or
+ * `:---:`.
+ *
+ * Part of the AST rather than of a renderer because it is **content**: the
+ * author wrote it in the document. It is also the one thing on this list that
+ * decides whether a column of figures can be read — digits only line up when
+ * they are set flush right, and a table of numbers set left is a table nobody
+ * checks. The divider was already being matched and its colons thrown away.
+ */
+export type Align = "left" | "center" | "right";
+
 export type Block =
   | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: Run[] }
   | { kind: "paragraph"; runs: Run[] }
   | { kind: "list"; ordered: boolean; items: ListItem[] }
   | { kind: "code"; language?: string; text: string }
   | { kind: "quote"; runs: Run[] }
-  | { kind: "table"; header: Run[][]; rows: Run[][][] }
+  | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] }
   | { kind: "rule" };
 
 export interface MarkdownDocument {
@@ -216,6 +228,23 @@ function isTableRow(line: string): boolean {
   return line.includes("|") && line.trim() !== "";
 }
 
+/**
+ * The divider row's colons, which say how each column is set.
+ *
+ * `left` is the default and is what a column with no colons has always been
+ * rendered as, so a table written before this existed comes out unchanged.
+ */
+function alignmentsOf(divider: string): Align[] {
+  return splitRow(divider).map((cell) => {
+    const opens = cell.startsWith(":");
+    const closes = cell.endsWith(":");
+    if (opens && closes) {
+      return "center";
+    }
+    return closes ? "right" : "left";
+  });
+}
+
 export function parseMarkdown(source: string): MarkdownDocument {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
@@ -314,13 +343,14 @@ export function parseMarkdown(source: string): MarkdownDocument {
       TABLE_DIVIDER.test(lines[index + 1]!)
     ) {
       const header = splitRow(line).map((cell) => parseInline(cell));
+      const align = alignmentsOf(lines[index + 1]!);
       index += 2;
       const rows: Run[][][] = [];
       while (index < lines.length && isTableRow(lines[index]!)) {
         rows.push(splitRow(lines[index]!).map((cell) => parseInline(cell)));
         index += 1;
       }
-      blocks.push({ kind: "table", header, rows });
+      blocks.push({ kind: "table", header, rows, align });
       continue;
     }
 

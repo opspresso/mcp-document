@@ -29,6 +29,7 @@ import { escapeXml } from "../xml.js";
 import { buildZip, stored } from "../zip.js";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { DOC, centiPoints, hashed } from "./theme.js";
 
 const DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
@@ -53,9 +54,9 @@ const MARGIN = { left: 5669, right: 5669, top: 5669, bottom: 4252, header: 4252,
 /** What is left for text once the margins are taken out — a table's width. */
 const TEXT_WIDTH = PAGE.width - MARGIN.left - MARGIN.right;
 
-const BODY_SIZE = 1000;
-const CODE_SIZE = 900;
-const HEADING_SIZES = [1800, 1500, 1300, 1200, 1100, 1000];
+const BODY_SIZE = centiPoints(DOC.body);
+const CODE_SIZE = centiPoints(DOC.code);
+const HEADING_SIZES = DOC.headings.map(centiPoints);
 
 /** One indent step, in HWPUNIT: about 7mm. */
 const INDENT_STEP = 2000;
@@ -68,7 +69,9 @@ const LINK = 8;
 /** Headings occupy the ids just past the sixteen combinations; then the quote. */
 const HEADING_CHAR_BASE = 16;
 const QUOTE_CHAR = 22;
-const CHAR_COUNT = QUOTE_CHAR + 1;
+/** White and bold, for the one place a run's own styles cannot say what it needs: a filled header cell. */
+const TABLE_HEADER_CHAR = 23;
+const CHAR_COUNT = TABLE_HEADER_CHAR + 1;
 
 /** `paraPr` ids: body, six indent levels, code, quote, heading. */
 const PARA_BODY = 0;
@@ -77,12 +80,24 @@ const PARA_INDENT_LEVELS = 5;
 const PARA_CODE = PARA_INDENT_BASE + PARA_INDENT_LEVELS;
 const PARA_QUOTE = PARA_CODE + 1;
 const PARA_HEADING = PARA_QUOTE + 1;
-const PARA_COUNT = PARA_HEADING + 1;
+/** Table cells whose column asked to be centred or set flush right. */
+const PARA_CENTER = PARA_HEADING + 1;
+const PARA_RIGHT = PARA_CENTER + 1;
+const PARA_COUNT = PARA_RIGHT + 1;
 
-/** Border fills: 1 is nothing, 2 is a cell, 3 is a header cell with a tint. */
+/**
+ * Border fills, by id.
+ *
+ * A cell gets horizontal rules only — a full grid boxes every number in, and the
+ * eye reads a table by its rows. The heading rule is a fill with nothing but a
+ * bottom edge, which is how OWPML puts a line under a paragraph.
+ */
 const FILL_NONE = 1;
 const FILL_CELL = 2;
 const FILL_HEADER = 3;
+const FILL_ZEBRA = 4;
+const FILL_HEADING_RULE = 5;
+const FILL_COUNT = 5;
 
 const encoder = new TextEncoder();
 
@@ -127,20 +142,40 @@ function fontfaces(): string {
   );
 }
 
-function borderFill(id: number, visible: boolean, tint: boolean): string {
-  const edge = (name: string): string =>
-    `<hh:${name} type="${visible ? "SOLID" : "NONE"}" width="0.12 mm" color="#BFBFBF"/>`;
+interface Fill {
+  /** Which edges are drawn, and in what colour. */
+  edges?: { sides: "horizontal" | "bottom"; colour: string; width?: string };
+  /** A solid ground behind the cell. */
+  ground?: string;
+}
+
+const FILLS: Record<number, Fill> = {
+  [FILL_NONE]: {},
+  [FILL_CELL]: { edges: { sides: "horizontal", colour: hashed("rule") } },
+  [FILL_HEADER]: { edges: { sides: "horizontal", colour: hashed("brand") }, ground: hashed("brand") },
+  [FILL_ZEBRA]: { edges: { sides: "horizontal", colour: hashed("rule") }, ground: hashed("brandTint") },
+  [FILL_HEADING_RULE]: {
+    edges: { sides: "bottom", colour: hashed("brandLight"), width: "0.4 mm" },
+  },
+};
+
+function borderFill(id: number): string {
+  const fill = FILLS[id] ?? {};
+  const edge = (name: string, drawn: boolean): string =>
+    `<hh:${name} type="${drawn ? "SOLID" : "NONE"}" ` +
+    `width="${fill.edges?.width ?? "0.12 mm"}" color="${fill.edges?.colour ?? hashed("rule")}"/>`;
+  const sides = fill.edges?.sides;
   return (
     `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">` +
     '<hh:slash type="NONE" Crooked="0" isCounter="0"/>' +
     '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>' +
-    edge("leftBorder") +
-    edge("rightBorder") +
-    edge("topBorder") +
-    edge("bottomBorder") +
-    '<hh:diagonal type="NONE" width="0.1 mm" color="#000000"/>' +
-    (tint
-      ? '<hc:fillBrush><hc:winBrush faceColor="#F2F2F2" hatchColor="#000000" alpha="0"/></hc:fillBrush>'
+    edge("leftBorder", false) +
+    edge("rightBorder", false) +
+    edge("topBorder", sides === "horizontal") +
+    edge("bottomBorder", sides !== undefined) +
+    `<hh:diagonal type="NONE" width="0.1 mm" color="${hashed("ink")}"/>` +
+    (fill.ground
+      ? `<hc:fillBrush><hc:winBrush faceColor="${fill.ground}" hatchColor="${hashed("ink")}" alpha="0"/></hc:fillBrush>`
       : "") +
     "</hh:borderFill>"
   );
@@ -150,12 +185,21 @@ function borderFill(id: number, visible: boolean, tint: boolean): string {
 function charProperty(id: number): string {
   const heading = id >= HEADING_CHAR_BASE && id < HEADING_CHAR_BASE + 6;
   const quote = id === QUOTE_CHAR;
-  const bold = heading || (id & BOLD) !== 0;
+  const tableHeader = id === TABLE_HEADER_CHAR;
+  const bold = heading || tableHeader || (id & BOLD) !== 0;
   const italic = quote || (id & ITALIC) !== 0;
-  const code = !heading && !quote && (id & CODE) !== 0;
-  const link = !heading && !quote && (id & LINK) !== 0;
+  const code = !heading && !quote && !tableHeader && (id & CODE) !== 0;
+  const link = !heading && !quote && !tableHeader && (id & LINK) !== 0;
   const height = heading ? HEADING_SIZES[id - HEADING_CHAR_BASE]! : code ? CODE_SIZE : BODY_SIZE;
-  const colour = link ? "#0563C1" : quote ? "#595959" : "#000000";
+  const colour = tableHeader
+    ? hashed("onBrand")
+    : heading
+      ? hashed("brand")
+      : link
+        ? hashed("brandDeep")
+        : quote
+          ? hashed("inkMuted")
+          : hashed("ink");
   const font = code ? 1 : 0;
   const reference = FONT_LANGUAGES.map(
     (language) => `${language.toLowerCase()}="${font}"`,
@@ -169,7 +213,7 @@ function charProperty(id: number): string {
     `<hh:ratio ${scale}/><hh:spacing ${zero}/><hh:relSz ${scale}/><hh:offset ${zero}/>` +
     (bold ? "<hh:bold/>" : "") +
     (italic ? "<hh:italic/>" : "") +
-    (link ? '<hh:underline type="BOTTOM" shape="SOLID" color="#0563C1"/>' : "") +
+    (link ? `<hh:underline type="BOTTOM" shape="SOLID" color="${hashed("brandDeep")}"/>` : "") +
     "</hh:charPr>"
   );
 }
@@ -188,10 +232,12 @@ function paraProperty(id: number): string {
   const intent = indentLevel !== undefined ? -INDENT_STEP : 0;
   const before = heading ? 600 : 0;
   const after = code ? 0 : 300;
+  const horizontal =
+    id === PARA_CENTER ? "CENTER" : id === PARA_RIGHT ? "RIGHT" : "JUSTIFY";
   return (
     `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" ` +
     'suppressLineNumbers="0" checked="0">' +
-    '<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>' +
+    `<hh:align horizontal="${horizontal}" vertical="BASELINE"/>` +
     '<hh:heading type="NONE" idRef="0" level="0"/>' +
     '<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" ' +
     `keepWithNext="${heading ? 1 : 0}" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>` +
@@ -207,8 +253,11 @@ function paraProperty(id: number): string {
     `<hc:prev value="${before}" unit="HWPUNIT"/><hc:next value="${after}" unit="HWPUNIT"/></hh:margin>` +
     '<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>' +
     "</hh:default></hh:switch>" +
-    `<hh:border borderFillIDRef="${FILL_NONE}" offsetLeft="0" offsetRight="0" offsetTop="0" ` +
-    'offsetBottom="0" connect="0" ignoreMargin="0"/>' +
+    // A heading carries a hairline under it — the same signal the DOCX and PDF
+    // renderers draw, said in the only way OWPML has: a border fill whose only
+    // drawn edge is the bottom one.
+    `<hh:border borderFillIDRef="${heading ? FILL_HEADING_RULE : FILL_NONE}" offsetLeft="0" ` +
+    'offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>' +
     "</hh:paraPr>"
   );
 }
@@ -220,7 +269,9 @@ function headerXml(): string {
     '<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>' +
     "<hh:refList>" +
     fontfaces() +
-    `<hh:borderFills itemCnt="3">${borderFill(FILL_NONE, false, false)}${borderFill(FILL_CELL, true, false)}${borderFill(FILL_HEADER, true, true)}</hh:borderFills>` +
+    `<hh:borderFills itemCnt="${FILL_COUNT}">` +
+    Array.from({ length: FILL_COUNT }, (_, index) => borderFill(index + 1)).join("") +
+    "</hh:borderFills>" +
     `<hh:charProperties itemCnt="${CHAR_COUNT}">` +
     Array.from({ length: CHAR_COUNT }, (_, id) => charProperty(id)).join("") +
     "</hh:charProperties>" +
@@ -237,7 +288,17 @@ function headerXml(): string {
 
 /* -------------------------------------------------------------------- body */
 
-/** The section properties, which belong inside the first run of the first paragraph. */
+/**
+ * The section properties, which belong inside the first run of the first
+ * paragraph.
+ *
+ * **No page number here, unlike the DOCX and PDF renderers.** OWPML puts a
+ * footer in a `hp:footer` control with its own sub-list and a `hp:pageNum`
+ * inside it, anchored to the section — a shape this file would have to get right
+ * against one reader that either opens a file or does not. The other two formats
+ * have many forgiving implementations and a one-element field; this one has
+ * neither, and a numbered page is not worth a document 한글 refuses to open.
+ */
 function sectionProperties(): string {
   return (
     '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" ' +
@@ -252,12 +313,12 @@ function sectionProperties(): string {
     `<hp:margin header="${MARGIN.header}" footer="${MARGIN.footer}" gutter="0" left="${MARGIN.left}" ` +
     `right="${MARGIN.right}" top="${MARGIN.top}" bottom="${MARGIN.bottom}"/></hp:pagePr>` +
     '<hp:footNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>' +
-    '<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>' +
+    `<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="${hashed("ink")}"/>` +
     '<hp:noteSpacing betweenNotes="850" belowLine="567" aboveLine="850"/>' +
     '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="EACH_COLUMN" beneathText="0"/>' +
     "</hp:footNotePr>" +
     '<hp:endNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>' +
-    '<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="#000000"/>' +
+    `<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="${hashed("ink")}"/>` +
     '<hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>' +
     '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="0"/>' +
     "</hp:endNotePr>" +
@@ -328,13 +389,20 @@ class Renderer {
     const rowHeight = 2400;
     const cell = (cells: readonly Run[][], column: number, row: number): string => {
       const header = row === 0;
-      const runs = (cells[column] ?? []).map((run) => (header ? { ...run, bold: true } : run));
+      const runs = cells[column] ?? [];
       // The cell's paragraph is a `hp:p` of its own inside a `hp:subList`; a
       // cell with no paragraph is what makes 한글 refuse the file.
-      const inner = this.paragraph(this.runs(runs), PARA_BODY);
+      const align = block.align[column];
+      const inner = this.paragraph(
+        this.runs(runs, header ? TABLE_HEADER_CHAR : undefined),
+        align === "right" ? PARA_RIGHT : align === "center" ? PARA_CENTER : PARA_BODY,
+      );
+      // Zebra counted from the header, so the first data row is the plain one —
+      // a tint straight under a filled header reads as a two-row header.
+      const fill = header ? FILL_HEADER : row % 2 === 0 ? FILL_ZEBRA : FILL_CELL;
       return (
         `<hp:tc name="" header="${header ? 1 : 0}" hasMargin="0" protect="0" editable="0" dirty="0" ` +
-        `borderFillIDRef="${header ? FILL_HEADER : FILL_CELL}">` +
+        `borderFillIDRef="${fill}">` +
         '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" ' +
         'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">' +
         inner +

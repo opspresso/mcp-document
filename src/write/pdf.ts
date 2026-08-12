@@ -48,6 +48,7 @@ import {
 } from "pdf-lib";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { DOC, rgbOf, type ColourName } from "./theme.js";
 
 /** A4 in points, and a 2cm margin. */
 const PAGE_WIDTH = 595.28;
@@ -55,20 +56,30 @@ const PAGE_HEIGHT = 841.89;
 const MARGIN = 56.7;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
-const BODY_SIZE = 11;
-const CODE_SIZE = 9.5;
-const HEADING_SIZES = [20, 17, 15, 13, 12, 11];
+const BODY_SIZE = DOC.body;
+const CODE_SIZE = DOC.code;
+const CAPTION_SIZE = DOC.caption;
+const HEADING_SIZES = DOC.headings;
 const LINE_RATIO = 1.5;
 /** Space above a heading, as a multiple of its own size. */
 const HEADING_SPACE_ABOVE = 0.8;
 const PARAGRAPH_SPACE = 6;
 const INDENT_STEP = 18;
 
-const INK = rgb(0.13, 0.13, 0.13);
-const LINK_COLOUR = rgb(0.02, 0.39, 0.76);
-const MUTED = rgb(0.4, 0.4, 0.4);
-const RULE_COLOUR = rgb(0.75, 0.75, 0.75);
-const CODE_BACKGROUND = rgb(0.96, 0.96, 0.96);
+/** The shared palette, in the three floats `pdf-lib` wants. */
+function ink(name: ColourName): RGB {
+  const { r, g, b } = rgbOf(name);
+  return rgb(r, g, b);
+}
+
+const INK = ink("ink");
+const LINK_COLOUR = ink("brandDeep");
+const MUTED = ink("inkMuted");
+const RULE_COLOUR = ink("rule");
+const BRAND = ink("brand");
+const BRAND_LIGHT = ink("brandLight");
+const ON_BRAND = ink("onBrand");
+const TINT = ink("brandTint");
 
 /**
  * Scripts that break between any two characters.
@@ -120,8 +131,16 @@ function fontFor(fonts: Fonts, run: Run): PDFFont {
   return run.bold ? fonts.bold : fonts.regular;
 }
 
-function colourFor(run: Run): RGB {
-  return run.href ? LINK_COLOUR : INK;
+/**
+ * `override` exists for text on a brand-filled surface, which has to be white
+ * whatever the run says. A link keeps its own colour even there — losing the
+ * only signal that it is clickable would be the worse trade.
+ */
+function colourFor(run: Run, override?: RGB): RGB {
+  if (run.href) {
+    return override ?? LINK_COLOUR;
+  }
+  return override ?? INK;
 }
 
 /** Split a run into the smallest pieces a line may break between. */
@@ -198,6 +217,31 @@ class Writer {
     return this.pages;
   }
 
+  /**
+   * Page numbers, drawn once the count is known.
+   *
+   * After the body rather than during it, because a footer written while the
+   * page is being filled would be one the layout then has to avoid — and the
+   * number of a page is not knowable until the page exists. A single-page
+   * document gets none: "1" under a one-page memo is furniture.
+   */
+  numberPages(): void {
+    if (this.pages < 2) {
+      return;
+    }
+    for (const [index, page] of this.document.getPages().entries()) {
+      const label = `${index + 1}`;
+      page.drawText(label, {
+        x: PAGE_WIDTH - MARGIN - this.fonts.regular.widthOfTextAtSize(label, CAPTION_SIZE),
+        // Inside the bottom margin, which nothing else is allowed to enter.
+        y: MARGIN * 0.55,
+        size: CAPTION_SIZE,
+        font: this.fonts.regular,
+        color: MUTED,
+      });
+    }
+  }
+
   /** Make room for `height`, starting a page when there is none. */
   private reserve(height: number): void {
     if (this.y - height < MARGIN) {
@@ -240,7 +284,13 @@ class Writer {
     this.page.node.set(PDFName.of("Annots"), this.document.context.obj([annotation]));
   }
 
-  private drawLine(line: Line, left: number, size: number, baseline: number): void {
+  private drawLine(
+    line: Line,
+    left: number,
+    size: number,
+    baseline: number,
+    colour?: RGB,
+  ): void {
     let x = left;
     /** Where the current link started, so it is underlined and annotated once. */
     let linkFrom: number | undefined;
@@ -277,7 +327,7 @@ class Writer {
           y: baseline,
           size,
           font: fontFor(this.fonts, atom.run),
-          color: colourFor(atom.run),
+          color: colourFor(atom.run, colour),
           // Nanum Gothic has no italic face; shearing the glyphs is what stands
           // in for one.
           ...(atom.run.italic ? { xSkew: degrees(12) } : {}),
@@ -291,7 +341,13 @@ class Writer {
   /** Lay out runs into the given width and draw them, returning the height used. */
   private paragraph(
     runs: readonly Run[],
-    options: { size: number; left: number; width: number; firstLinePrefix?: Atom[] },
+    options: {
+      size: number;
+      left: number;
+      width: number;
+      firstLinePrefix?: Atom[];
+      colour?: RGB;
+    },
   ): void {
     const { size, left, width } = options;
     const atoms = [
@@ -303,7 +359,7 @@ class Writer {
     for (const line of lines.length > 0 ? lines : [{ atoms: [], width: 0 }]) {
       this.reserve(height);
       // The baseline sits above the descender, not on the line's bottom edge.
-      this.drawLine(line, left, size, this.y + height * 0.25);
+      this.drawLine(line, left, size, this.y + height * 0.25, options.colour);
     }
   }
 
@@ -322,7 +378,7 @@ class Writer {
         y: this.y,
         width: CONTENT_WIDTH,
         height,
-        color: CODE_BACKGROUND,
+        color: TINT,
       });
       // Cut rather than wrapped: a wrapped line of code is a line of code that
       // says something different, and there is no continuation marker in a PDF
@@ -358,26 +414,47 @@ class Writer {
       });
       const height = Math.max(1, ...laid.map((lines) => lines.length)) * BODY_SIZE * 1.35 + 6;
       this.reserve(height);
+      // One fill per row, not one box per cell. A full grid boxes every number
+      // in; the eye reads a table by its rows, and the column gaps are already
+      // doing what the vertical lines would.
+      const fill = header ? BRAND : index % 2 === 0 ? TINT : undefined;
+      if (fill) {
+        this.page.drawRectangle({
+          x: MARGIN,
+          y: this.y,
+          width: CONTENT_WIDTH,
+          height,
+          color: fill,
+        });
+      }
+      this.page.drawLine({
+        start: { x: MARGIN, y: this.y },
+        end: { x: MARGIN + CONTENT_WIDTH, y: this.y },
+        thickness: 0.5,
+        color: RULE_COLOUR,
+      });
       let x = MARGIN;
       laid.forEach((lines, column) => {
-        this.page.drawRectangle({
-          x,
-          y: this.y,
-          width: widths[column]!,
-          height,
-          borderColor: RULE_COLOUR,
-          borderWidth: 0.5,
-          ...(header ? { color: rgb(0.95, 0.95, 0.95) } : {}),
-        });
+        const width = widths[column]!;
+        const align = block.align[column];
         lines.forEach((line, lineIndex) => {
+          // Every line of a wrapped cell is placed on its own, so a two-line
+          // right-aligned cell has both lines flush to the same edge.
+          const left =
+            align === "right"
+              ? x + width - 5 - line.width
+              : align === "center"
+                ? x + (width - line.width) / 2
+                : x + 5;
           this.drawLine(
             line,
-            x + 5,
+            left,
             BODY_SIZE,
             this.y + height - 4 - (lineIndex + 1) * BODY_SIZE * 1.35 + BODY_SIZE * 0.35,
+            header ? ON_BRAND : undefined,
           );
         });
-        x += widths[column]!;
+        x += width;
       });
     });
     this.space(PARAGRAPH_SPACE);
@@ -390,8 +467,21 @@ class Writer {
         this.space(size * HEADING_SPACE_ABOVE);
         this.paragraph(
           block.runs.map((run) => ({ ...run, bold: true })),
-          { size, left: MARGIN, width: CONTENT_WIDTH },
+          { size, left: MARGIN, width: CONTENT_WIDTH, colour: BRAND },
         );
+        // A hairline under the top two levels, in the brand colour. It is what
+        // the console's lavender page became on paper: the same signal at a
+        // hundredth of the ink.
+        if (block.level <= 2) {
+          this.space(3);
+          this.reserve(1);
+          this.page.drawLine({
+            start: { x: MARGIN, y: this.y },
+            end: { x: PAGE_WIDTH - MARGIN, y: this.y },
+            thickness: 0.75,
+            color: BRAND_LIGHT,
+          });
+        }
         this.space(2);
         return;
       }
@@ -425,7 +515,12 @@ class Writer {
         const top = this.y;
         this.paragraph(
           block.runs.map((run) => ({ ...run, italic: true })),
-          { size: BODY_SIZE, left: MARGIN + INDENT_STEP, width: CONTENT_WIDTH - INDENT_STEP },
+          {
+            size: BODY_SIZE,
+            left: MARGIN + INDENT_STEP,
+            width: CONTENT_WIDTH - INDENT_STEP,
+            colour: MUTED,
+          },
         );
         // Only when the quote stayed on one page: a bar drawn from a `top` that
         // belongs to the previous page runs the length of this one.
@@ -435,7 +530,7 @@ class Writer {
             y: this.y,
             width: 2,
             height: top - this.y,
-            color: MUTED,
+            color: BRAND_LIGHT,
           });
         }
         this.space(PARAGRAPH_SPACE);
@@ -518,5 +613,6 @@ export async function renderPdf(
   for (const block of document.blocks) {
     writer.block(block);
   }
+  writer.numberPages();
   return { bytes: await pdf.save(), pages: writer.pageCount() };
 }

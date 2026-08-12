@@ -41,12 +41,31 @@ test("a document has exactly the parts its content types declare", () => {
     "docProps/core.xml",
     "word/_rels/document.xml.rels",
     "word/document.xml",
+    "word/footer1.xml",
     "word/styles.xml",
   ]);
   const types = partOf(bytes, "[Content_Types].xml");
-  for (const declared of ["/word/document.xml", "/word/styles.xml", "/docProps/core.xml"]) {
+  for (const declared of [
+    "/word/document.xml",
+    "/word/styles.xml",
+    "/word/footer1.xml",
+    "/docProps/core.xml",
+  ]) {
     assert.ok(types.includes(declared), `content types should name ${declared}`);
   }
+});
+
+test("the page number is a field, and the footer it sits in is wired to the section", () => {
+  const bytes = build("# Title\n\nbody");
+  // A number written here would be wrong the moment the text reflowed; `PAGE`
+  // is computed by Word when the document is opened.
+  assert.match(partOf(bytes, "word/footer1.xml"), /<w:fldSimple w:instr=" PAGE ">/);
+  const id = /<w:footerReference w:type="default" r:id="(rId\d+)"\/>/.exec(
+    partOf(bytes, "word/document.xml"),
+  )?.[1];
+  assert.ok(id, "the section must reference the footer");
+  const rels = partOf(bytes, "word/_rels/document.xml.rels");
+  assert.ok(rels.includes(`Id="${id}"`) && rels.includes('Target="footer1.xml"'));
 });
 
 test("headings survive with their level", () => {
@@ -85,6 +104,13 @@ test("a table becomes a table, and every cell has a paragraph in it", () => {
   const body = partOf(bytes, "word/document.xml");
   // A `w:tc` with no `w:p` inside is what makes Word call a file corrupt.
   assert.equal(/<w:tc>(?:(?!<w:p[ />]).)*<\/w:tc>/s.test(body), false);
+});
+
+test("a column asked to be set right is set right, and a plain one is untouched", () => {
+  const aligned = partOf(build("| a | n |\n|---|---:|\n| x | 42 |"), "word/document.xml");
+  assert.equal(aligned.match(/<w:jc w:val="right"\/>/g)?.length, 2, "header and cell both move");
+  const plain = partOf(build("| a | n |\n|---|---|\n| x | 42 |"), "word/document.xml");
+  assert.equal(plain.includes("<w:jc"), false, "left is Word's default and needs no element");
 });
 
 test("a link is a hyperlink with a relationship behind it", () => {

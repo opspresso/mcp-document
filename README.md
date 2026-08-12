@@ -126,7 +126,8 @@ text. That failure is worse than the refusal.
 `render_document` takes Markdown and produces one of four formats. Supported:
 ATX headings, paragraphs, `**bold**`, `*italic*`, `` `code` ``, links, bullet
 and numbered lists nested up to four levels (two spaces of indent to a level),
-GFM tables, block quotes, fenced code blocks, and horizontal rules.
+GFM tables **with column alignment** (`---:` sets a column flush right, `:---:`
+centres it), block quotes, fenced code blocks, and horizontal rules.
 
 Two lines with no blank line between them are **one paragraph**, as Markdown
 says. A renderer cannot recover a distinction the parser threw away, so the tool
@@ -144,6 +145,58 @@ definition. What real numbering buys is the reader's editor renumbering a list
 they edit; nothing here is edited before it is read, and the literal form is
 what survives extraction back to text — which is how this server's own round
 trip checks itself.
+
+### The design system
+
+Every colour and size is decided in `src/write/theme.ts`, and the four renderers
+read it rather than carrying their own. Before that they had already drifted —
+the table border was one grey in three of them and a different grey in the PDF,
+and a level 1 heading was 16pt in DOCX, 18pt in HWPX and 20pt in the PDF. The
+same Markdown produced three documents of visibly different weight.
+
+**The palette is AgentDure's own**, taken from the console: an indigo-violet
+brand ramp at OKLCH hue 290, a near-black with that hue in it rather than a
+neutral grey, and the console's own categorical chart colours — already validated
+there for colour-vision deficiency — carried into the PPTX theme so that a reader
+who adds a shape to the deck gets brand colours rather than Office's defaults.
+
+| Token | | Used for |
+|---|---|---|
+| `brand` | `#6B3DD8` | Headings, table headers, filled surfaces |
+| `brandLight` | `#805FE9` | The hairline under a heading, quote bars |
+| `brandDeep` | `#5B33B8` | Links and inline code |
+| `brandTint` | `#F4F3FE` | Zebra rows, code grounds |
+| `surfaceTint` | `#F4F5FF` | Cover slides only |
+| `ink` / `inkMuted` | `#1F1D2B` / `#6B6880` | Body, then captions and quotes |
+| `rule` | `#E3E1EE` | Table rules, horizontal rules |
+
+**What did not survive the move from screen to page.** The console's page is
+lavender rather than white, and that is its most recognisable trait — laid under
+a whole document it is ink somebody pays for and an artefact in every photocopy,
+so it is kept for the one surface that can carry it free (a cover slide) and a
+brand hairline under each heading does the work on every other page. The grain
+texture the console lays over its background would need a raster embedded in
+every file, for a texture nobody would name if asked; it is dropped. Pure black
+is never used.
+
+**No font is named, in any format.** A face named here is a face the reader's
+machine may not have, and the substitute is then chosen by nobody. AgentDure's
+own faces make that worse rather than better — Figtree, Chakra Petch and
+JetBrains Mono carry no Hangul at all, so a Korean document set in them is a
+document set in whatever the system falls back to. Colour and layout carry the
+identity instead, and they survive every substitution. The PDF is the exception
+it always was: it embeds Nanum Gothic, because PDF has no system stack behind it.
+
+Tables are set with **horizontal rules only** — a full grid boxes every number
+in, and the eye reads a table by its rows. The header is filled with the brand
+colour and repeats when a table breaks across pages.
+
+Page numbers are a `PAGE` field in DOCX and a `slidenum` field in PPTX, so a
+document that reflows or a deck that gains a slide renumbers itself; the PDF,
+whose layout this repository decides, draws the number directly and only when
+there is more than one page. **HWPX gets none** — OWPML puts a footer in a
+control with its own sub-list anchored to the section, and that is a shape to get
+exactly right against the one reader that either opens a file or does not.
 
 ### Where a slide ends
 
