@@ -123,10 +123,10 @@ text. That failure is worse than the refusal.
 
 ## Writing
 
-`write_document` takes Markdown and produces one of three formats. Supported:
+`render_document` takes Markdown and produces one of three formats. Supported:
 ATX headings, paragraphs, `**bold**`, `*italic*`, `` `code` ``, links, bullet
-and numbered lists with one level of nesting, GFM tables, block quotes, fenced
-code blocks, and horizontal rules.
+and numbered lists nested up to four levels (two spaces of indent to a level),
+GFM tables, block quotes, fenced code blocks, and horizontal rules.
 
 Two lines with no blank line between them are **one paragraph**, as Markdown
 says. A renderer cannot recover a distinction the parser threw away, so the tool
@@ -227,12 +227,12 @@ that can reach it.**
 
 The open mode exists for the deployment this is built for: a Deployment behind a
 ClusterIP with no ingress, where the network is the boundary. The process states
-which mode it is in on the line after "listening", on every start. **If you
-expose it, set the key.**
+which mode it is in among its startup lines, on every start. **If you expose it,
+set the key.**
 
 ### There is no tenant any more
 
-`write_document` required `x-document-tenant`, taken from the header rather than
+`render_document` required `x-document-tenant`, taken from the header rather than
 from a tool argument: a model that can name its own tenant can write into
 another project's prefix, including a model talked into it by a document it read
 a moment earlier. The channel was wrong, and no amount of validation fixes that.
@@ -280,6 +280,7 @@ unprivileged `node` user and needs no writable volume:
     npm run typecheck
     npm test             # node --test, no test framework
     npm run build        # tsc -p tsconfig.build.json (tests excluded from dist)
+    npm start            # node dist/server.js, after a build
 
 Tests cover the pure decisions — format detection, the zip budget, the HWP
 record walk and its control-character table, the spreadsheet's column
