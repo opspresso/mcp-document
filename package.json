@@ -10,8 +10,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
-    "demo:docx": "tsx scripts/demo-docx.ts",
-    "demo:pptx": "tsx scripts/demo-pptx.ts",
+    "demo": "tsx scripts/demo.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "version": "node scripts/sync-version.mjs && git add src/version.ts"

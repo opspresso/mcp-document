@@ -261,8 +261,11 @@ the picture centred at its aspect ratio, never upscaled past its pixels, the
 caption under it in the muted caption size. An image inside prose stays a
 link, as it always was.
 
-`npm run demo:docx` renders `scripts/demo-doc.md` — a report that uses every
-device — into `build/demo.docx`, the review surface for any change here.
+`npm run demo` renders `scripts/demo-doc.md` — a report that uses every
+device — into `build/demo.docx`, and the same report into `build/demo.pdf`
+and `build/demo.hwpx`: one source in three page formats is what shows a
+drifted colour or a diverged heading scale, which is what `write/theme.ts`
+exists to prevent.
 
 ### The presentation engine
 
@@ -316,7 +319,7 @@ letting a slide overflow and lose it. Blocks are flattened to lines before a
 slide is filled, which is what lets a numbered list split across two slides and
 still count 4, 5, 6; a table splits by row and repeats its header.
 
-`npm run demo:pptx` renders `scripts/demo-deck.md` — one deck that uses every
+`npm run demo` renders `scripts/demo-deck.md` — one deck that uses every
 archetype — into `build/demo.pptx`, which is the review surface for any change
 to a renderer: the tests prove the package round-trips, and the demo deck is
 what a person opens to see the design.
