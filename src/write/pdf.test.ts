@@ -194,3 +194,38 @@ test("column widths follow the content and stay inside their clamps", () => {
   const lopsided = columnWidths([[cell("a")[0]!, [{ text: "x".repeat(5000) }]]], 2);
   assert.ok(lopsided[0]! / total > 0.05, "the small column keeps a usable share");
 });
+
+test("a report gets a cover, a contents page with real page numbers, and numbered chapters", async () => {
+  const report =
+    "# 도입 보고서\n\n부제 한 줄\n\n# 첫 장\n\n" +
+    "본문\n\n# 둘째 장\n\n## 절\n\n내용";
+  const { bytes, pages } = await renderPdf(parseMarkdown(report), {
+    title: "t",
+    created: CREATED,
+  });
+  assert.ok(pages >= 4, `cover, contents and two chapter pages: got ${pages}`);
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text } = await extractText(pdf, { mergePages: false });
+  const pageOf = (needle: string): number => text.findIndex((page) => page.includes(needle)) + 1;
+  assert.equal(pageOf("도입 보고서"), 1, "the cover leads");
+  assert.equal(pageOf("목차"), 2, "the contents page follows it");
+  assert.ok(pageOf("01") >= 3, "chapters carry their ordinal");
+  // The contents entry names the page the chapter actually landed on — the
+  // one format whose contents can afford real numbers.
+  const contents = text[1]!;
+  assert.ok(contents.includes("첫 장"), contents);
+  assert.ok(contents.includes(String(pageOf("본문"))), "the number is the chapter's real page");
+});
+
+test("a memo stays a memo: no cover page, no contents, no ordinals", async () => {
+  const { bytes, pages } = await renderPdf(parseMarkdown("## 하나\n\n본문"), {
+    title: "t",
+    created: CREATED,
+  });
+  assert.equal(pages, 1);
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text } = await extractText(pdf, { mergePages: true });
+  assert.equal(text.includes("목차"), false);
+});

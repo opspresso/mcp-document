@@ -33,7 +33,16 @@ import {
   type ImageAsset,
   type ImageSize,
 } from "./image.js";
-import { figureOf, forceSemantic, type Figure, type Metric, type Semantic } from "./semantics.js";
+import {
+  TOC_THRESHOLD,
+  coverOf,
+  figureOf,
+  forceSemantic,
+  tocEntriesOf,
+  type Figure,
+  type Metric,
+  type Semantic,
+} from "./semantics.js";
 import { DOC, PALETTE, halfPoints } from "./theme.js";
 import { PRODUCER } from "../version.js";
 
@@ -525,42 +534,15 @@ function comparisonTable(semantic: Extract<Semantic, { kind: "comparison" }>): E
   };
 }
 
-/**
- * The opening `#` and its first paragraph, when the document leads with them.
- *
- * The same reading the deck's planner makes: the first `#` is the cover's
- * title, the paragraph right under it the subtitle, and both leave the body.
- * A `#` anywhere later is a chapter, which `documentXml` numbers in order.
- */
-function splitCover(blocks: readonly Block[]): {
-  cover?: { title: Run[]; subtitle?: Run[] };
-  body: readonly Block[];
-} {
-  const [first, second] = blocks;
-  if (first?.kind !== "heading" || first.level !== 1) {
-    return { body: blocks };
-  }
-  if (second?.kind === "paragraph") {
-    return { cover: { title: first.runs, subtitle: second.runs }, body: blocks.slice(2) };
-  }
-  return { cover: { title: first.runs }, body: blocks.slice(1) };
-}
-
-/** How many level 1-2 headings a body needs before a contents page earns its paper. */
-const TOC_THRESHOLD = 3;
-
 const HANGUL = /[ㄱ-힝]/;
 
 function documentXml(document: MarkdownDocument, renderer: Renderer): string {
-  const { cover, body } = splitCover(document.blocks);
+  const { cover, body } = coverOf(document.blocks);
   let out = cover ? renderer.cover(cover.title, cover.subtitle) : "";
   // A contents page, when there is a cover to follow and enough structure to
   // list. A memo gets none; a report gets one whether or not it asked, because
   // a reader deciding whether to read is what a contents page is for.
-  const entries = body
-    .filter((block): block is Extract<Block, { kind: "heading" }> => block.kind === "heading")
-    .filter((block) => block.level <= 2)
-    .map((block) => ({ runs: block.runs, level: block.level }));
+  const entries = tocEntriesOf(body);
   if (cover && entries.length >= TOC_THRESHOLD) {
     const korean = HANGUL.test(cover.title.map((run) => run.text).join(""));
     out += renderer.tocPage(korean ? "목차" : "Contents", entries);

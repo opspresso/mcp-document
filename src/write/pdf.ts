@@ -47,7 +47,9 @@ import {
   type RGB,
 } from "pdf-lib";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
+import { plainTextOf } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { TOC_THRESHOLD, coverOf, tocEntriesOf } from "./semantics.js";
 import { DOC, rgbOf, type ColourName } from "./theme.js";
 import { PRODUCER } from "../version.js";
 
@@ -205,6 +207,10 @@ class Writer {
   private page: PDFPage;
   private y: number;
   private pages = 1;
+  /** The blank second page a contents list is drawn onto once the body is laid. */
+  private tocPage?: PDFPage;
+  /** Level 1-2 headings in body order, with the page each landed on. */
+  private readonly headings: { text: string; level: number; page: number }[] = [];
 
   constructor(
     private readonly document: PDFDocument,
@@ -224,13 +230,17 @@ class Writer {
    * After the body rather than during it, because a footer written while the
    * page is being filled would be one the layout then has to avoid — and the
    * number of a page is not knowable until the page exists. A single-page
-   * document gets none: "1" under a one-page memo is furniture.
+   * document gets none: "1" under a one-page memo is furniture. The cover is
+   * counted but not numbered, as every title page is.
    */
-  numberPages(): void {
+  numberPages(skipCover: boolean): void {
     if (this.pages < 2) {
       return;
     }
     for (const [index, page] of this.document.getPages().entries()) {
+      if (skipCover && index === 0) {
+        continue;
+      }
       const label = `${index + 1}`;
       page.drawText(label, {
         x: PAGE_WIDTH - MARGIN - this.fonts.regular.widthOfTextAtSize(label, CAPTION_SIZE),
@@ -241,6 +251,132 @@ class Writer {
         color: MUTED,
       });
     }
+  }
+
+  newPage(): void {
+    this.page = this.document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+    this.pages += 1;
+    this.y = PAGE_HEIGHT - MARGIN;
+  }
+
+  /**
+   * The cover: the brand rule a third down the page, the title under it in the
+   * cover size, the subtitle in the muted ink. The caller turns the page — the
+   * cover does not know whether a contents page follows it.
+   */
+  cover(title: readonly Run[], subtitle: readonly Run[] | undefined): void {
+    this.y = PAGE_HEIGHT - 280;
+    this.page.drawRectangle({ x: MARGIN, y: this.y, width: 60, height: 3, color: BRAND });
+    this.y -= 20;
+    this.paragraph(
+      title.map((run) => ({ ...run, bold: true })),
+      { size: DOC.coverTitle, left: MARGIN, width: CONTENT_WIDTH },
+    );
+    if (subtitle) {
+      this.space(10);
+      this.paragraph(subtitle, {
+        size: DOC.subtitle,
+        left: MARGIN,
+        width: CONTENT_WIDTH,
+        colour: MUTED,
+      });
+    }
+  }
+
+  /** The blank page the contents will occupy, claimed before the body decides them. */
+  reserveTocPage(): void {
+    this.tocPage = this.document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+    this.pages += 1;
+  }
+
+  /**
+   * What stands at the top of a chapter's page: its number, large and in the
+   * light brand. A fresh page first, except when nothing is on this one.
+   */
+  chapterOpener(ordinal: number): void {
+    if (this.y < PAGE_HEIGHT - MARGIN) {
+      this.newPage();
+    }
+    const height = DOC.ordinal * 1.05;
+    this.reserve(height);
+    this.page.drawText(String(ordinal).padStart(2, "0"), {
+      x: MARGIN,
+      y: this.y,
+      size: DOC.ordinal,
+      font: this.fonts.bold,
+      color: BRAND_LIGHT,
+    });
+  }
+
+  /**
+   * The contents, drawn onto the reserved page now that the body has decided
+   * which page every heading landed on — which makes this the one format whose
+   * contents page carries real numbers. Entries past one page are left out
+   * rather than flowed: a contents list that displaces the body it lists has
+   * the priorities backwards.
+   */
+  fillToc(label: string): void {
+    if (!this.tocPage) {
+      return;
+    }
+    const saved = { page: this.page, y: this.y };
+    this.page = this.tocPage;
+    this.y = PAGE_HEIGHT - MARGIN;
+
+    const labelSize = HEADING_SIZES[0]!;
+    this.y -= labelSize * LINE_RATIO;
+    this.page.drawText(label, {
+      x: MARGIN,
+      y: this.y + labelSize * 0.3,
+      size: labelSize,
+      font: this.fonts.bold,
+      color: BRAND,
+    });
+    this.y -= 4;
+    this.page.drawLine({
+      start: { x: MARGIN, y: this.y },
+      end: { x: PAGE_WIDTH - MARGIN, y: this.y },
+      thickness: 0.75,
+      color: BRAND_LIGHT,
+    });
+    this.y -= 10;
+
+    for (const entry of this.headings) {
+      const height = BODY_SIZE * 1.7;
+      if (this.y - height < MARGIN) {
+        break;
+      }
+      this.y -= height;
+      const indent = (entry.level - 1) * INDENT_STEP;
+      const font = entry.level === 1 ? this.fonts.bold : this.fonts.regular;
+      const number = String(entry.page);
+      const numberWidth = this.fonts.regular.widthOfTextAtSize(number, BODY_SIZE);
+      // Cut rather than wrapped, like a code line: a two-line contents entry
+      // pushes every number below it off its row.
+      let text = entry.text;
+      const room = CONTENT_WIDTH - indent - numberWidth - 12;
+      while (text !== "" && font.widthOfTextAtSize(text, BODY_SIZE) > room) {
+        text = text.slice(0, -1);
+      }
+      const baseline = this.y + height * 0.25;
+      this.page.drawText(text, {
+        x: MARGIN + indent,
+        y: baseline,
+        size: BODY_SIZE,
+        font,
+        color: entry.level === 1 ? INK : MUTED,
+      });
+      this.page.drawText(number, {
+        x: PAGE_WIDTH - MARGIN - numberWidth,
+        y: baseline,
+        size: BODY_SIZE,
+        font: this.fonts.regular,
+        color: MUTED,
+      });
+    }
+
+    this.page = saved.page;
+    this.y = saved.y;
   }
 
   /** Make room for `height`, starting a page when there is none. */
@@ -470,6 +606,14 @@ class Writer {
           block.runs.map((run) => ({ ...run, bold: true })),
           { size, left: MARGIN, width: CONTENT_WIDTH, colour: BRAND },
         );
+        // Recorded after the draw, when the page it landed on is a fact.
+        if (block.level <= 2) {
+          this.headings.push({
+            text: plainTextOf(block.runs),
+            level: block.level,
+            page: this.pages,
+          });
+        }
         // A hairline under the top two levels, in the brand colour. It is what
         // the console's lavender page became on paper: the same signal at a
         // hundredth of the ink.
@@ -620,10 +764,28 @@ export async function renderPdf(
   pdf.setCreationDate(options.created);
   pdf.setModificationDate(options.created);
 
+  const { cover, body } = coverOf(document.blocks);
+  const toc = cover !== undefined && tocEntriesOf(body).length >= TOC_THRESHOLD;
+
   const writer = new Writer(pdf, fonts);
-  for (const block of document.blocks) {
+  if (cover) {
+    writer.cover(cover.title, cover.subtitle);
+    if (toc) {
+      writer.reserveTocPage();
+    }
+    writer.newPage();
+  }
+  let ordinal = 0;
+  for (const block of body) {
+    if (block.kind === "heading" && block.level === 1) {
+      ordinal += 1;
+      writer.chapterOpener(ordinal);
+    }
     writer.block(block);
   }
-  writer.numberPages();
+  if (toc && cover) {
+    writer.fillToc(/[ㄱ-힝]/.test(plainTextOf(cover.title)) ? "목차" : "Contents");
+  }
+  writer.numberPages(cover !== undefined);
   return { bytes: await pdf.save(), pages: writer.pageCount() };
 }

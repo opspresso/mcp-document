@@ -316,6 +316,44 @@ export function figureOf(block: Block | undefined): Figure | undefined {
   return { asset: run.href.slice(ASSET_SCHEME.length), caption: [{ text: run.text }] };
 }
 
+/** What a cover holds: the opening title, and the paragraph right under it. */
+export interface Cover {
+  title: Run[];
+  subtitle?: Run[];
+}
+
+/**
+ * The opening `#` and its first paragraph, when the document leads with them.
+ *
+ * The same reading everywhere: the first `#` is the cover's title, the
+ * paragraph right under it the subtitle, and both leave the body. What a
+ * format *makes* of the cover — a title page, a title slide — is its own
+ * decision; that the document has one is not.
+ */
+export function coverOf(blocks: readonly Block[]): { cover?: Cover; body: readonly Block[] } {
+  const [first, second] = blocks;
+  if (first?.kind !== "heading" || first.level !== 1) {
+    return { body: blocks };
+  }
+  if (second?.kind === "paragraph") {
+    return { cover: { title: first.runs, subtitle: second.runs }, body: blocks.slice(2) };
+  }
+  return { cover: { title: first.runs }, body: blocks.slice(1) };
+}
+
+/** How many level 1-2 headings a body needs before a contents page earns its paper. */
+export const TOC_THRESHOLD = 3;
+
+/** The level 1-2 headings a contents page lists, in order. */
+export function tocEntriesOf(
+  blocks: readonly Block[],
+): { runs: Run[]; level: number }[] {
+  return blocks
+    .filter((block): block is Extract<Block, { kind: "heading" }> => block.kind === "heading")
+    .filter((block) => block.level <= 2)
+    .map((block) => ({ runs: block.runs, level: block.level }));
+}
+
 /**
  * The first semantic the blocks' shape matches, or nothing.
  *
