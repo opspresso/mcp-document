@@ -70,7 +70,7 @@ import {
   linesOf,
 } from "./layout.js";
 import { A, NUMBER_FIELD_ID, P, R, TABLE_STYLE_ID } from "./ooxml.js";
-import { fitInto, type ImageSize } from "./image.js";
+import { fitInto, type ImageSize } from "../image.js";
 import type { Piece, Slide, Style } from "./types.js";
 
 /** What a slide's rels part needs to say about one relationship, in rId order. */

@@ -1,22 +1,69 @@
 /**
- * What a section's content *is*, recognised from its shape.
+ * What a run of blocks *is*, recognised from its shape — with no format in it.
  *
  * Markdown says what to show and none of how; these functions read the
  * structure the author already wrote — three sub-headings with a line each, a
- * list of numbers, a lone block quote — and name the slide archetype that
- * structure was reaching for. No directive syntax is needed for any of it,
- * which is the point: the deck improves without the input contract changing.
+ * list of numbers, a lone block quote — and name the semantic that structure
+ * was reaching for. The PPTX planner turns a semantic into a designed slide;
+ * a page renderer may turn the same one into a styled block, or leave it as
+ * the plain flow it already renders well. Recognition is shared; what to make
+ * of it is each format's own decision.
  *
- * **Every rule here is conservative.** A section that does not match a pattern
- * *exactly* stays a content slide, because a layout forced onto content it
- * does not fit is worse than a plain slide — a "cards" slide with a code block
- * wedged into a card is how generated decks get their reputation. When a rule
- * says 2 to 4, a fifth card means the section was prose after all.
+ * **Every rule here is conservative.** Content that does not match a pattern
+ * *exactly* stays unrecognised, because a treatment forced onto content it
+ * does not fit is worse than plain rendering — a "cards" slide with a code
+ * block wedged into a card is how generated documents get their reputation.
+ * When a rule says 2 to 4, a fifth card means the section was prose after all.
  */
 
-import type { Block, Run } from "../../markdown.js";
-import { plainTextOf } from "../../markdown.js";
-import type { Card, CompareColumn, Metric, Milestone, Slide } from "./types.js";
+import type { Block, Run } from "../markdown.js";
+import { plainTextOf } from "../markdown.js";
+
+/** One card: a sub-heading and at most a line or two under it. */
+export interface Card {
+  title: Run[];
+  body?: Run[];
+}
+
+/** One metric: the number, and what the number is of. */
+export interface Metric {
+  value: string;
+  label: Run[];
+}
+
+/** One line in a comparison column, bulleted when it came from a list. */
+export interface CompareLine {
+  runs: Run[];
+  bullet: boolean;
+}
+
+/** One side of a comparison: its name, and its lines. */
+export interface CompareColumn {
+  title: Run[];
+  lines: CompareLine[];
+}
+
+/** One station on a timeline: when, and what happened there. */
+export interface Milestone {
+  when: string;
+  what: Run[];
+}
+
+/** A figure: one image reference standing alone, with its caption. */
+export interface Figure {
+  /** The asset's name — the key the caller sent the bytes under. */
+  asset: string;
+  caption: Run[];
+}
+
+/** What a run of blocks turned out to be. */
+export type Semantic =
+  | { kind: "cards"; cards: Card[] }
+  | { kind: "metrics"; metrics: Metric[] }
+  | { kind: "quote"; quote: Run[]; attribution?: Run[] }
+  | { kind: "comparison"; columns: [CompareColumn, CompareColumn] }
+  | { kind: "process"; steps: Run[][] }
+  | { kind: "timeline"; milestones: Milestone[] };
 
 /** How much text fits a card before the card is prose. */
 const CARD_BODY_LIMIT = 160;
@@ -36,14 +83,17 @@ const STEP_LIMIT = 48;
 /** What a timeline says happened has to fit under its station. */
 const MILESTONE_LIMIT = 40;
 
+/** A comparison needs the title to say it is one: "A vs B", "도입 비교". */
+const COMPARISON_TITLE = /(^|\s)vs\.?(\s|$)|비교/i;
+
 /**
  * A token that names a time: 2026, 2026년, Q3, 8월, 3분기, 2주차. The whole
  * token must be the date — "2026년의" is prose about a year, not a station.
  */
 const WHEN = /^(20\d{2}년?|q[1-4]|\d{1,2}월|\d{1,2}분기|\d{1,2}주차?)$/i;
 
-/** A comparison needs the title to say it is one: "A vs B", "도입 비교". */
-const COMPARISON_TITLE = /(^|\s)vs\.?(\s|$)|비교/i;
+/** The `asset://` scheme, which is how Markdown reaches the bytes the caller sent. */
+export const ASSET_SCHEME = "asset://";
 
 function isSubheading(block: Block): block is Extract<Block, { kind: "heading" }> {
   return block.kind === "heading" && block.level >= 3;
@@ -55,9 +105,9 @@ function isSubheading(block: Block): block is Extract<Block, { kind: "heading" }
  * The all-heading shape is what an author writes when they mean a set of
  * parallel things — 핵심 가치, three pillars, four features. Anything else in
  * the section (a list, a code block, a second paragraph) means the headings
- * were structure, not a set, and the section stays content.
+ * were structure, not a set.
  */
-export function asCards(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function cardsOf(blocks: readonly Block[]): Semantic | undefined {
   const cards: Card[] = [];
   for (const block of blocks) {
     if (isSubheading(block)) {
@@ -79,7 +129,7 @@ export function asCards(title: readonly Run[], blocks: readonly Block[]): Slide 
   if (cards.length < 2 || cards.length > 4) {
     return undefined;
   }
-  return { type: "cards", title: [...title], cards };
+  return { kind: "cards", cards };
 }
 
 /**
@@ -87,7 +137,7 @@ export function asCards(title: readonly Run[], blocks: readonly Block[]): Slide 
  * "99.99% Availability", "가용성 99.99%". The figure may lead or trail; it must
  * be one token with a digit in it, and the name must be the rest.
  */
-export function asMetrics(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function metricsOf(blocks: readonly Block[]): Semantic | undefined {
   const [list] = blocks;
   if (blocks.length !== 1 || list?.kind !== "list" || list.ordered) {
     return undefined;
@@ -118,22 +168,21 @@ export function asMetrics(title: readonly Run[], blocks: readonly Block[]): Slid
       return undefined;
     }
   }
-  return { type: "metrics", title: [...title], metrics };
+  return { kind: "metrics", metrics };
 }
 
 /**
- * A quote slide: one block quote alone, or with a single short dash-led line
+ * A pulled quote: one block quote alone, or with a single short dash-led line
  * after it — "— 운영팀 리드". A paragraph that does not announce itself as an
- * attribution means the quote was part of an argument, and arguments are
- * content slides.
+ * attribution means the quote was part of an argument.
  */
-export function asQuote(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function quoteOf(blocks: readonly Block[]): Semantic | undefined {
   const [quote, attribution, ...rest] = blocks;
   if (quote?.kind !== "quote" || rest.length > 0) {
     return undefined;
   }
   if (attribution === undefined) {
-    return { type: "quote", title: [...title], quote: quote.runs };
+    return { kind: "quote", quote: quote.runs };
   }
   if (attribution.kind !== "paragraph") {
     return undefined;
@@ -142,24 +191,16 @@ export function asQuote(title: readonly Run[], blocks: readonly Block[]): Slide 
   if (!ATTRIBUTION_LEAD.test(line) || line.length > ATTRIBUTION_LIMIT) {
     return undefined;
   }
-  return { type: "quote", title: [...title], quote: quote.runs, attribution: attribution.runs };
+  return { kind: "quote", quote: quote.runs, attribution: attribution.runs };
 }
 
 /**
- * A comparison: the title says "vs" (or 비교), and the section is exactly two
+ * The two-column shape itself, with no opinion about the title: exactly two
  * sub-headings, each followed by short lists or paragraphs. Two named columns
  * is the shape; three is a cards section, and prose under one heading is not
  * a comparison at all.
  */
-export function asComparison(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
-  if (!COMPARISON_TITLE.test(plainTextOf(title))) {
-    return undefined;
-  }
-  return asColumns(title, blocks);
-}
-
-/** The two-column shape itself, with no opinion about the title. */
-function asColumns(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function columnsOf(blocks: readonly Block[]): Semantic | undefined {
   const columns: CompareColumn[] = [];
   for (const block of blocks) {
     if (isSubheading(block)) {
@@ -190,7 +231,15 @@ function asColumns(title: readonly Run[], blocks: readonly Block[]): Slide | und
       return undefined;
     }
   }
-  return { type: "comparison", title: [...title], columns: [columns[0]!, columns[1]!] };
+  return { kind: "comparison", columns: [columns[0]!, columns[1]!] };
+}
+
+/** A comparison recognised without being asked also needs the title to say "vs". */
+export function comparisonOf(title: readonly Run[], blocks: readonly Block[]): Semantic | undefined {
+  if (!COMPARISON_TITLE.test(plainTextOf(title))) {
+    return undefined;
+  }
+  return columnsOf(blocks);
 }
 
 /** The lone flat ordered list a process or a timeline is made of, or nothing. */
@@ -213,7 +262,7 @@ function orderedItems(blocks: readonly Block[], most: number): Run[][] | undefin
  * Q3, 8월. All of them, not most: one undated step means the author was
  * writing a sequence of actions, which is a process.
  */
-export function asTimeline(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function timelineOf(blocks: readonly Block[]): Semantic | undefined {
   const items = orderedItems(blocks, 6);
   if (!items) {
     return undefined;
@@ -231,7 +280,7 @@ export function asTimeline(title: readonly Run[], blocks: readonly Block[]): Sli
     }
     milestones.push({ when: tokens[0]!, what: [{ text: rest }] });
   }
-  return { type: "timeline", title: [...title], milestones };
+  return { kind: "timeline", milestones };
 }
 
 /**
@@ -239,7 +288,7 @@ export function asTimeline(title: readonly Run[], blocks: readonly Block[]): Sli
  * The numbers the author wrote become the numbers in the nodes, so nothing is
  * renumbered and nothing is lost if the section falls back to a plain list.
  */
-export function asProcess(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+export function processOf(blocks: readonly Block[]): Semantic | undefined {
   const items = orderedItems(blocks, 5);
   if (!items) {
     return undefined;
@@ -247,61 +296,71 @@ export function asProcess(title: readonly Run[], blocks: readonly Block[]): Slid
   if (items.some((runs) => plainTextOf(runs).length > STEP_LIMIT)) {
     return undefined;
   }
-  return { type: "process", title: [...title], steps: items.map((runs) => [...runs]) };
+  return { kind: "process", steps: items.map((runs) => [...runs]) };
 }
 
 /**
- * The first archetype the section's shape matches, or nothing.
+ * A paragraph that is exactly one `![caption](asset://…)` image. The parser
+ * turned the image into a link run carrying the alt text, so this is a
+ * paragraph of one asset-scheme link — anything more around it means the image
+ * was an illustration inside prose, which stays a link.
+ */
+export function figureOf(block: Block | undefined): Figure | undefined {
+  if (block?.kind !== "paragraph" || block.runs.length !== 1) {
+    return undefined;
+  }
+  const [run] = block.runs;
+  if (!run?.href?.startsWith(ASSET_SCHEME)) {
+    return undefined;
+  }
+  return { asset: run.href.slice(ASSET_SCHEME.length), caption: [{ text: run.text }] };
+}
+
+/**
+ * The first semantic the blocks' shape matches, or nothing.
  *
  * Order matters only where patterns could overlap, and they barely can: a
  * comparison requires its title to say so, so it is asked first; cards and
- * metrics are disjoint (headings against a list); a quote shares nothing with
- * either.
+ * metrics are disjoint (headings against a list); process and timeline split
+ * an ordered list between them; a quote shares nothing with any.
  */
-export function specialise(title: readonly Run[] | undefined, blocks: readonly Block[]): Slide | undefined {
+export function recognise(title: readonly Run[] | undefined, blocks: readonly Block[]): Semantic | undefined {
   if (!title || blocks.length === 0) {
     return undefined;
   }
   return (
-    asComparison(title, blocks) ??
-    asCards(title, blocks) ??
-    asMetrics(title, blocks) ??
-    asTimeline(title, blocks) ??
-    asProcess(title, blocks) ??
-    asQuote(title, blocks)
+    comparisonOf(title, blocks) ??
+    cardsOf(blocks) ??
+    metricsOf(blocks) ??
+    timelineOf(blocks) ??
+    processOf(blocks) ??
+    quoteOf(blocks)
   );
 }
 
 /**
- * The archetype a `:::name` directive asked for, tried against its contents.
+ * The semantic a `:::name` directive asked for, tried against its contents.
  *
  * A directive overrides *recognition*, not fit: it skips the guards that exist
  * only to avoid surprising an author — the "vs" a comparison title must say —
- * and keeps the ones that are about the geometry, because five cards do not
- * fit a row however clearly they were requested. Content that cannot form the
- * named archetype falls back to a plain slide rather than failing the render.
+ * and keeps the ones that are about what fits, because five cards do not fit a
+ * row however clearly they were requested. Content that cannot form the named
+ * semantic falls back to plain rendering rather than failing the render.
  */
-export function forceArchetype(
-  name: string,
-  title: readonly Run[] | undefined,
-  blocks: readonly Block[],
-): Slide | undefined {
-  if (!title) {
-    return undefined;
-  }
+export function forceSemantic(name: string, blocks: readonly Block[]): Semantic | undefined {
   switch (name) {
     case "cards":
-      return asCards(title, blocks);
+      return cardsOf(blocks);
     case "metrics":
-      return asMetrics(title, blocks);
+      return metricsOf(blocks);
     case "comparison":
-      return asColumns(title, blocks);
+      return columnsOf(blocks);
     case "timeline":
-      return asTimeline(title, blocks);
+      return timelineOf(blocks);
     case "process":
-      return asProcess(title, blocks);
+      return processOf(blocks);
     case "quote":
-      return asQuote(title, blocks);
+      return quoteOf(blocks);
     default:
       return undefined;
   }

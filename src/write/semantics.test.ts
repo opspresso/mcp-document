@@ -1,34 +1,34 @@
 /**
- * The archetype rules, tested at the boundary that matters: what matches.
+ * The recognition rules, tested at the boundary that matters: what matches.
  *
  * Every rule is conservative by design, so most of these tests are about what
- * must *not* match — the cost of a wrong layout is a slide that misrepresents
- * its content, which is worse than any plain slide.
+ * must *not* match — the cost of a wrong treatment is content misrepresented,
+ * which is worse than plain rendering.
  */
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseMarkdown } from "../../markdown.js";
-import { specialise } from "./detect.js";
+import { parseMarkdown } from "../markdown.js";
+import { figureOf, recognise } from "./semantics.js";
 
 function detect(markdown: string) {
   const { blocks } = parseMarkdown(markdown);
   const [first, ...rest] = blocks;
   assert.ok(first?.kind === "heading");
-  return specialise(first.runs, rest);
+  return recognise(first.runs, rest);
 }
 
 test("two to four sub-headings with short lines are cards", () => {
-  const slide = detect(
+  const semantic = detect(
     "## 핵심 가치\n\n### Automation\n\n반복 작업 자동화\n\n### Integration\n\nMCP 기반 연결\n\n### Intelligence\n\nLLM 기반 판단",
   );
-  assert.equal(slide?.type, "cards");
-  assert.ok(slide?.type === "cards" && slide.cards.length === 3);
-  assert.ok(slide?.type === "cards" && slide.cards[1]?.body !== undefined);
+  assert.equal(semantic?.kind, "cards");
+  assert.ok(semantic?.kind === "cards" && semantic.cards.length === 3);
+  assert.ok(semantic?.kind === "cards" && semantic.cards[1]?.body !== undefined);
 });
 
 test("a heading without a line still makes a card, but one heading is not a set", () => {
-  assert.equal(detect("## 구성\n\n### 하나\n\n### 둘")?.type, "cards");
+  assert.equal(detect("## 구성\n\n### 하나\n\n### 둘")?.kind, "cards");
   assert.equal(detect("## 구성\n\n### 하나\n\n설명"), undefined);
 });
 
@@ -43,11 +43,11 @@ test("five headings are a list of topics, not a row of cards", () => {
 
 test("short numeric bullets are metrics, figure leading or trailing", () => {
   const leading = detect("## 주요 성과\n\n- 99.99% Availability\n- 43% Cost Reduction\n- 2.4x Deployment Speed");
-  assert.equal(leading?.type, "metrics");
-  assert.ok(leading?.type === "metrics" && leading.metrics[0]?.value === "99.99%");
+  assert.equal(leading?.kind, "metrics");
+  assert.ok(leading?.kind === "metrics" && leading.metrics[0]?.value === "99.99%");
   const trailing = detect("## 성과\n\n- 가용성 99.99%\n- 절감률 43%");
-  assert.equal(trailing?.type, "metrics");
-  assert.ok(trailing?.type === "metrics" && trailing.metrics[0]?.value === "99.99%");
+  assert.equal(trailing?.kind, "metrics");
+  assert.ok(trailing?.kind === "metrics" && trailing.metrics[0]?.value === "99.99%");
 });
 
 test("a list is not metrics when its lines are prose, numbered, or figure-free", () => {
@@ -60,12 +60,12 @@ test("a list is not metrics when its lines are prose, numbered, or figure-free",
   );
 });
 
-test("a lone block quote is a quote slide, with at most a line of attribution", () => {
+test("a lone block quote is a pulled quote, with at most a line of attribution", () => {
   const bare = detect("## 고객의 말\n\n> 도입 후 반복 업무가 사라졌다.");
-  assert.equal(bare?.type, "quote");
+  assert.equal(bare?.kind, "quote");
   const attributed = detect("## 고객의 말\n\n> 도입 후 반복 업무가 사라졌다.\n\n— 운영팀 리드");
-  assert.equal(attributed?.type, "quote");
-  assert.ok(attributed?.type === "quote" && attributed.attribution !== undefined);
+  assert.equal(attributed?.kind, "quote");
+  assert.ok(attributed?.kind === "quote" && attributed.attribution !== undefined);
   assert.equal(
     detect("## s\n\n> 인용\n\n이어지는 본문 문단이 인용을 논증의 일부로 만든다. 이 문단은 충분히 길어서 출처 표기로 볼 수 없다."),
     undefined,
@@ -76,16 +76,16 @@ test("a vs-titled pair of sub-headings is a comparison; without vs it is cards",
   const markdown = (title: string) =>
     `## ${title}\n\n### IRSA\n\n- 표준 방식\n- 넓은 지원\n\n### Pod Identity\n\n- 간단한 설정\n- 신규 권장`;
   const compared = detect(markdown("IRSA vs Pod Identity"));
-  assert.equal(compared?.type, "comparison");
-  assert.ok(compared?.type === "comparison" && compared.columns[0].lines.length === 2);
+  assert.equal(compared?.kind, "comparison");
+  assert.ok(compared?.kind === "comparison" && compared.columns[0].lines.length === 2);
   const plain = detect(markdown("인증 방식"));
-  assert.notEqual(plain?.type, "comparison");
+  assert.notEqual(plain?.kind, "comparison");
 });
 
 test("three to five short ordered steps are a process", () => {
-  const slide = detect("## 도입 절차\n\n1. 접수 자동 분류\n2. 초안 자동 생성\n3. 담당자 검토\n4. 자동 발송");
-  assert.equal(slide?.type, "process");
-  assert.ok(slide?.type === "process" && slide.steps.length === 4);
+  const semantic = detect("## 도입 절차\n\n1. 접수 자동 분류\n2. 초안 자동 생성\n3. 담당자 검토\n4. 자동 발송");
+  assert.equal(semantic?.kind, "process");
+  assert.ok(semantic?.kind === "process" && semantic.steps.length === 4);
 });
 
 test("a process refuses long steps, few steps, many steps and nesting", () => {
@@ -100,20 +100,29 @@ test("a process refuses long steps, few steps, many steps and nesting", () => {
 });
 
 test("an ordered list whose every step opens with a date is a timeline", () => {
-  const slide = detect("## 로드맵\n\n1. Q1 파일럿 운영\n2. Q2 보안 검토\n3. Q3 전사 배포");
-  assert.equal(slide?.type, "timeline");
-  assert.ok(slide?.type === "timeline" && slide.milestones[0]?.when === "Q1");
+  const semantic = detect("## 로드맵\n\n1. Q1 파일럿 운영\n2. Q2 보안 검토\n3. Q3 전사 배포");
+  assert.equal(semantic?.kind, "timeline");
+  assert.ok(semantic?.kind === "timeline" && semantic.milestones[0]?.when === "Q1");
   const korean = detect("## 일정\n\n1. 3월 파일럿\n2. 6월 확대\n3. 9월 전사 적용");
-  assert.equal(korean?.type, "timeline");
+  assert.equal(korean?.kind, "timeline");
 });
 
 test("one undated step turns a timeline back into a process", () => {
-  const slide = detect("## 일정\n\n1. Q1 파일럿\n2. 보안 검토\n3. Q3 배포");
-  assert.equal(slide?.type, "process");
+  const semantic = detect("## 일정\n\n1. Q1 파일럿\n2. 보안 검토\n3. Q3 배포");
+  assert.equal(semantic?.kind, "process");
 });
 
 test("a comparison needs exactly two columns with something in each", () => {
   assert.equal(detect("## A vs B\n\n### A\n\n- a"), undefined, "one column");
   assert.equal(detect("## A vs B\n\n### A\n\n- a\n\n### B\n\n- b\n\n### C\n\n- c"), undefined, "three columns");
   assert.equal(detect("## A vs B\n\n### A\n\n### B\n\n- b"), undefined, "an empty column");
+});
+
+test("a figure is one asset image standing alone, and nothing else", () => {
+  const [alone] = parseMarkdown("![전체 구조](asset://d.png)").blocks;
+  assert.deepEqual(figureOf(alone), { asset: "d.png", caption: [{ text: "전체 구조" }] });
+  const [prose] = parseMarkdown("앞 텍스트 ![그림](asset://d.png)").blocks;
+  assert.equal(figureOf(prose), undefined, "an image inside prose is an aside");
+  const [web] = parseMarkdown("![그림](https://example.com/a.png)").blocks;
+  assert.equal(figureOf(web), undefined, "a web image has no bytes to embed");
 });

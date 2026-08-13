@@ -9,6 +9,9 @@
  */
 
 import type { Align, Run } from "../../markdown.js";
+import type { Card, CompareColumn, Metric, Milestone } from "../semantics.js";
+
+export type { Card, CompareColumn, CompareLine, Metric, Milestone } from "../semantics.js";
 
 /** How a line of body text is set. Runs carry their own bold and italic on top. */
 export interface Style {
@@ -46,36 +49,6 @@ export type Piece =
     }
   | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] };
 
-/** One card: a sub-heading and at most a line or two under it. */
-export interface Card {
-  title: Run[];
-  body?: Run[];
-}
-
-/** One metric: the number, and what the number is of. */
-export interface Metric {
-  value: string;
-  label: Run[];
-}
-
-/** One line in a comparison column, bulleted when it came from a list. */
-export interface CompareLine {
-  runs: Run[];
-  bullet: boolean;
-}
-
-/** One side of a comparison: its name on the chip, its lines under it. */
-export interface CompareColumn {
-  title: Run[];
-  lines: CompareLine[];
-}
-
-/** One station on a timeline: when, and what happened there. */
-export interface Milestone {
-  when: string;
-  what: Run[];
-}
-
 /**
  * One slide, typed by what it is for rather than by what is on it.
  *
@@ -86,9 +59,9 @@ export interface Milestone {
  * Thank you, Q&A — set centred on the cover's ground.
  *
  * `cards`, `metrics`, `quote` and `comparison` are *recognised* from the shape
- * of a section's content by `detect.ts`, conservatively: a section that does
- * not match a pattern exactly stays `content`, because a layout forced onto
- * content it does not fit is worse than a plain slide.
+ * of a section's content by `write/semantics.ts`, conservatively: a section
+ * that does not match a pattern exactly stays `content`, because a layout
+ * forced onto content it does not fit is worse than a plain slide.
  */
 export type Slide =
   | { type: "cover"; title: Run[]; subtitle?: Run[] }

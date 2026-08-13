@@ -36,7 +36,7 @@ import {
   type LayoutIndex,
 } from "./package.js";
 import { DocumentError } from "../../errors.js";
-import { extensionOf, imageSize, type ImageMime } from "./image.js";
+import { extensionOf, imageSize, type ImageMime } from "../image.js";
 import { plan } from "./planner.js";
 import { Renderer, type MediaEntry } from "./render.js";
 import type { Slide } from "./types.js";

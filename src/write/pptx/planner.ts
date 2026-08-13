@@ -33,7 +33,7 @@
 import type { Block, MarkdownDocument, Run } from "../../markdown.js";
 import { plainTextOf } from "../../markdown.js";
 import { PALETTE } from "../theme.js";
-import { forceArchetype, specialise } from "./detect.js";
+import { figureOf, forceSemantic, recognise, type Semantic } from "../semantics.js";
 import {
   BODY_LINES,
   BODY_SIZE,
@@ -280,30 +280,27 @@ function contentSlides(title: Run[] | undefined, blocks: readonly Block[]): Slid
   });
 }
 
-/** The `asset://` scheme, which is how Markdown reaches the bytes the caller sent. */
-const ASSET_SCHEME = "asset://";
-
-/**
- * A titled section whose one block is one `![alt](asset://…)` image. The
- * parser turned the image into a link run carrying the alt text, so this is a
- * paragraph of exactly one asset-scheme link — anything more on the slide
- * means the image was an illustration inside prose, which stays a link.
- */
-function asImageSlide(title: Run[] | undefined, blocks: readonly Block[]): Slide | undefined {
-  const [paragraph] = blocks;
-  if (!title || blocks.length !== 1 || paragraph?.kind !== "paragraph") {
-    return undefined;
+/** A recognised semantic, given the section's title, as the slide it plans. */
+function slideOf(semantic: Semantic, title: Run[]): Slide {
+  switch (semantic.kind) {
+    case "cards":
+      return { type: "cards", title, cards: semantic.cards };
+    case "metrics":
+      return { type: "metrics", title, metrics: semantic.metrics };
+    case "quote":
+      return {
+        type: "quote",
+        title,
+        quote: semantic.quote,
+        ...(semantic.attribution ? { attribution: semantic.attribution } : {}),
+      };
+    case "comparison":
+      return { type: "comparison", title, columns: semantic.columns };
+    case "process":
+      return { type: "process", title, steps: semantic.steps };
+    case "timeline":
+      return { type: "timeline", title, milestones: semantic.milestones };
   }
-  const [run] = paragraph.runs;
-  if (paragraph.runs.length !== 1 || !run?.href?.startsWith(ASSET_SCHEME)) {
-    return undefined;
-  }
-  return {
-    type: "image",
-    title,
-    asset: run.href.slice(ASSET_SCHEME.length),
-    caption: [{ text: run.text }],
-  };
 }
 
 /** True when this section should close the deck rather than continue it. */
@@ -361,9 +358,9 @@ export function plan(document: MarkdownDocument): Presentation {
 
     // A section that is one image and nothing else is an image slide: the
     // picture takes the body, and its alt text is the caption.
-    const image = asImageSlide(section.title, section.blocks);
-    if (image) {
-      slides.push(image);
+    const figure = section.blocks.length === 1 ? figureOf(section.blocks[0]) : undefined;
+    if (figure && section.title) {
+      slides.push({ type: "image", title: section.title, ...figure });
       return;
     }
 
@@ -371,16 +368,16 @@ export function plan(document: MarkdownDocument): Presentation {
     // recognition handles the sections that never asked. Either way, content
     // that cannot form the archetype falls back to a plain slide.
     const [only] = section.blocks;
-    if (section.blocks.length === 1 && only?.kind === "directive") {
-      const forced = forceArchetype(only.name, section.title, only.blocks);
+    if (section.blocks.length === 1 && only?.kind === "directive" && section.title) {
+      const forced = forceSemantic(only.name, only.blocks);
       if (forced) {
-        slides.push(forced);
+        slides.push(slideOf(forced, section.title));
         return;
       }
     }
-    const special = specialise(section.title, section.blocks);
-    if (special) {
-      slides.push(special);
+    const recognised = recognise(section.title, section.blocks);
+    if (recognised && section.title) {
+      slides.push(slideOf(recognised, section.title));
       return;
     }
     slides.push(...contentSlides(section.title, section.blocks));

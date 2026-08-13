@@ -10,7 +10,7 @@
  * rasterises it first and sends the PNG.
  */
 
-import { DocumentError } from "../../errors.js";
+import { DocumentError } from "../errors.js";
 
 export class ImageError extends DocumentError {}
 
