@@ -143,7 +143,15 @@ export const DOC = {
 
 export const DECK = {
   coverTitle: 44,
+  /** The cover's second line, under the title and quieter than it. */
+  subtitle: 20,
   title: 32,
+  /** A section divider's title, sitting alone on a brand field. */
+  sectionTitle: 40,
+  /** The divider's "01" — a numeral this large is a mark, not text. */
+  ordinal: 66,
+  /** The closing slide's one line, between a title and a cover in weight. */
+  closingTitle: 36,
   body: 18,
   code: 14,
   /** Headings 3 to 6, which stay in a slide's body rather than opening one. */

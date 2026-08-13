@@ -5,14 +5,19 @@
  * this planner has to decide **where a slide ends** — there is no reflow to fall
  * back on, and text past the bottom of a box is simply not on the screen.
  *
- * Three decisions follow from that.
+ * **A slide opens at a level 1 or 2 heading**, and the level says what opens.
+ * A `#` that starts the document is the cover; a `#` later is a section
+ * divider, numbered in the order the dividers appear; a `##` is an ordinary
+ * content slide. Nothing else in Markdown says "new slide" — a horizontal
+ * rule, which is what Marp uses, turns a decorative divider into a page break
+ * in every document that was not written as a deck. Level 3 and below stay in
+ * the body as sub-headings.
  *
- * **A slide opens at a level 1 or 2 heading.** Nothing else in Markdown says
- * "new slide", and the alternative — a horizontal rule, as Marp uses — turns a
- * decorative divider into a page break in documents that were never written as
- * decks. Level 3 and below stay in the body as bold sub-headings. It also makes
- * the round trip symmetric: `read/pptx.ts` emits a deck as `## Slide N`, so
- * reading a deck and writing it back produces the same slides.
+ * **A cover holds a title and a subtitle, nothing more.** The first paragraph
+ * under the opening `#` is the subtitle; every other block moves past the
+ * cover, because a list on a title page is a list that belongs on the next
+ * slide. A divider works the same way: the slide is the title, and the
+ * section's blocks follow on content slides of their own.
  *
  * **Content that does not fit continues on the next slide**, titled with
  * `(계속)`. The line count is `layout.ts`'s estimate, in the same
@@ -26,12 +31,13 @@
  */
 
 import type { Block, MarkdownDocument, Run } from "../../markdown.js";
+import { plainTextOf } from "../../markdown.js";
 import { PALETTE } from "../theme.js";
 import {
   BODY_LINES,
   BODY_SIZE,
+  CLOSING_LINES,
   CODE_SIZE,
-  COVER_LINES,
   LINE_HEIGHT,
   ROW_HEIGHT,
   SUBHEADING_SIZES,
@@ -41,6 +47,16 @@ import type { Piece, Presentation, Slide, Style } from "./types.js";
 
 /** What a continued slide's title says, so the reader knows it is not a new topic. */
 export const CONTINUED = " (계속)";
+
+/**
+ * Titles that say the deck is over.
+ *
+ * The one archetype that is *recognised* rather than declared, and the match is
+ * deliberately narrow: a heading whose whole job is to close — 감사합니다,
+ * Thank you, Q&A — and only when it is the last section of the document.
+ * Recognising "다음 단계" here would turn a roadmap into a goodbye.
+ */
+const CLOSING_TITLE = /^(감사합니다|고맙습니다|thank\s*you|thanks|q\s*&?\s*a|질문|문의)/i;
 
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
@@ -66,7 +82,9 @@ function piecesOf(block: Block): Piece[] {
       return [{ kind: "text", runs: block.runs, style: BODY_STYLE }];
     case "list": {
       // The marker is resolved here rather than at render time, which is what
-      // lets a numbered list survive being split across two slides.
+      // lets a numbered list survive being split across two slides. It is a
+      // brand-coloured run — the one place a content slide affords a drop of
+      // colour without putting a field behind anything.
       const counters: number[] = [];
       return block.items.map((item) => {
         counters.length = item.depth + 1;
@@ -75,7 +93,7 @@ function piecesOf(block: Block): Piece[] {
         return {
           kind: "text",
           runs: [{ text: marker }, ...item.runs],
-          style: { size: BODY_SIZE, indent: item.depth + 1 },
+          style: { size: BODY_SIZE, indent: item.depth + 1, marker: PALETTE.brandLight },
         };
       });
     }
@@ -122,14 +140,8 @@ function splitTable(
   };
 }
 
-/**
- * Fill slides with pieces, greedily.
- *
- * `budget` is a function of the slide number because a cover holds less than an
- * ordinary slide: its title sits in the middle of the page, so what follows has
- * a quarter of the room.
- */
-function pack(pieces: readonly Piece[], budget: (slide: number) => number): Piece[][] {
+/** Fill slides with pieces, greedily, `budget` lines to a slide. */
+function pack(pieces: readonly Piece[], budget: number): Piece[][] {
   const slides: Piece[][] = [];
   let current: Piece[] = [];
   let used = 0;
@@ -145,7 +157,7 @@ function pack(pieces: readonly Piece[], budget: (slide: number) => number): Piec
   for (const piece of pieces) {
     let pending: Piece | undefined = piece;
     while (pending) {
-      const room = budget(slides.length) - used;
+      const room = budget - used;
       const cost = linesOf(pending);
       if (cost <= room) {
         current.push(pending);
@@ -177,12 +189,14 @@ function pack(pieces: readonly Piece[], budget: (slide: number) => number): Piec
     }
   }
   flush();
-  return slides.length > 0 ? slides : [[]];
+  return slides;
 }
 
+/** What one heading (or the headingless head of a document) turned out to own. */
 interface Section {
+  /** `cover` is the opening `#`; `divider` is any later one; `body` is a `##`. */
+  kind: "cover" | "divider" | "body";
   title?: Run[];
-  cover: boolean;
   blocks: Block[];
 }
 
@@ -193,34 +207,96 @@ function sectionsOf(document: MarkdownDocument): Section[] {
   for (const block of document.blocks) {
     if (block.kind === "heading" && block.level <= 2) {
       // Only a document that *opens* with a level 1 heading gets a cover: a `#`
-      // halfway down is a new section, and centring its title would read as the
-      // deck starting over.
-      current = { title: block.runs, cover: sections.length === 0 && block.level === 1, blocks: [] };
+      // halfway down is a new chapter, and centring its title would read as the
+      // deck starting over. It gets a divider instead.
+      const cover = sections.length === 0 && block.level === 1;
+      current = {
+        kind: cover ? "cover" : block.level === 1 ? "divider" : "body",
+        title: block.runs,
+        blocks: [],
+      };
       sections.push(current);
       continue;
     }
     if (!current) {
-      current = { cover: false, blocks: [] };
+      current = { kind: "body", blocks: [] };
       sections.push(current);
     }
     current.blocks.push(block);
   }
-  return sections.length > 0 ? sections : [{ cover: false, blocks: [] }];
+  return sections.length > 0 ? sections : [{ kind: "body", blocks: [] }];
+}
+
+/** Content slides for a section's blocks: the first carries `title`, the rest `(계속)`. */
+function contentSlides(title: Run[] | undefined, blocks: readonly Block[]): Slide[] {
+  const pages = pack(blocks.flatMap(piecesOf), BODY_LINES);
+  if (pages.length === 0) {
+    return title ? [{ type: "content", title, pieces: [] }] : [];
+  }
+  return pages.map((pieces, index) => ({
+    type: "content",
+    pieces,
+    ...(title
+      ? { title: index === 0 ? title : [...title, { text: CONTINUED }] }
+      : {}),
+  }));
+}
+
+/** True when this section should close the deck rather than continue it. */
+function closes(section: Section, last: boolean): boolean {
+  return (
+    last &&
+    section.title !== undefined &&
+    CLOSING_TITLE.test(plainTextOf(section.title).trim())
+  );
 }
 
 export function plan(document: MarkdownDocument): Presentation {
-  const slides = sectionsOf(document).flatMap((section): Slide[] => {
-    const pieces = section.blocks.flatMap(piecesOf);
-    const pages = pack(pieces, (slide) =>
-      section.cover && slide === 0 ? COVER_LINES : BODY_LINES,
-    );
-    return pages.map((page, index) => ({
-      type: section.cover && index === 0 ? "cover" : "content",
-      pieces: page,
-      ...(section.title
-        ? { title: index === 0 ? section.title : [...section.title, { text: CONTINUED }] }
-        : {}),
-    }));
+  const sections = sectionsOf(document);
+  const slides: Slide[] = [];
+  let ordinal = 0;
+
+  sections.forEach((section, index) => {
+    const last = index === sections.length - 1;
+
+    if (section.kind === "cover") {
+      // The first paragraph is the subtitle; everything else moves past the
+      // cover onto untitled content slides. A cover that keeps its lists is a
+      // cover that reads as a crowded content slide.
+      const [head, ...rest] = section.blocks;
+      const subtitle = head?.kind === "paragraph" ? head.runs : undefined;
+      const carried = head?.kind === "paragraph" ? rest : section.blocks;
+      slides.push({
+        type: "cover",
+        title: section.title ?? [],
+        ...(subtitle ? { subtitle } : {}),
+      });
+      slides.push(...contentSlides(undefined, carried));
+      return;
+    }
+
+    if (closes(section, last)) {
+      // The closing holds what fits under its centred title; a closing slide
+      // with more to say than that is a content section that ends the deck.
+      const pieces = section.blocks.flatMap(piecesOf);
+      const pages = pack(pieces, CLOSING_LINES);
+      if (pages.length <= 1) {
+        slides.push({ type: "closing", title: section.title ?? [], pieces: pages[0] ?? [] });
+        return;
+      }
+    }
+
+    if (section.kind === "divider") {
+      ordinal += 1;
+      slides.push({ type: "section", title: section.title ?? [], ordinal });
+      if (section.blocks.length > 0) {
+        slides.push(...contentSlides(section.title, section.blocks));
+      }
+      return;
+    }
+
+    slides.push(...contentSlides(section.title, section.blocks));
   });
-  return { slides };
+
+  return { slides: slides.length > 0 ? slides : [{ type: "content", pieces: [] }] };
 }

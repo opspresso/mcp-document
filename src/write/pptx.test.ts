@@ -49,8 +49,12 @@ test("a deck has the scaffolding its content types declare", () => {
     "ppt/presentation.xml",
     "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
     "ppt/slideLayouts/_rels/slideLayout2.xml.rels",
+    "ppt/slideLayouts/_rels/slideLayout3.xml.rels",
+    "ppt/slideLayouts/_rels/slideLayout4.xml.rels",
     "ppt/slideLayouts/slideLayout1.xml",
     "ppt/slideLayouts/slideLayout2.xml",
+    "ppt/slideLayouts/slideLayout3.xml",
+    "ppt/slideLayouts/slideLayout4.xml",
     "ppt/slideMasters/_rels/slideMaster1.xml.rels",
     "ppt/slideMasters/slideMaster1.xml",
     "ppt/slides/_rels/slide1.xml.rels",
@@ -96,13 +100,13 @@ test("a level 3 heading stays in the body rather than opening a slide", () => {
 
 test("the deck opens on a cover only when the document does", () => {
   // A `#` at the top is a cover and takes the title layout; the same heading
-  // halfway down is an ordinary section.
+  // halfway down is a section divider, which has a layout of its own.
   const cover = build("# 표지\n\n## 다음");
   assert.ok(partOf(cover, "ppt/slides/_rels/slide1.xml.rels").includes("slideLayout1.xml"));
   assert.ok(partOf(cover, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout2.xml"));
   const plain = build("본문\n\n# 나중 제목");
   assert.ok(partOf(plain, "ppt/slides/_rels/slide1.xml.rels").includes("slideLayout2.xml"));
-  assert.ok(partOf(plain, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout2.xml"));
+  assert.ok(partOf(plain, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout3.xml"));
 });
 
 test("every slide is registered in the presentation, and every one has a layout", () => {
@@ -290,4 +294,64 @@ test("an empty document is still a deck of one slide", () => {
   const slide = partOf(rendered.bytes, "ppt/slides/slide1.xml");
   assert.ok(slide.includes("<p:spTree>"));
   assert.ok(slide.includes("<a:p>"), "an empty slide still has a paragraph to select");
+});
+
+test("a mid-document # is a numbered divider, and its content follows it", () => {
+  const rendered = renderPptx(
+    parseMarkdown("# 표지\n\n# 첫 장\n\n내용 하나\n\n# 둘째 장"),
+    { title: "t", created: CREATED },
+  );
+  // Cover, divider 01, its content, divider 02.
+  assert.equal(rendered.slides, 4);
+  const text = pptxToText(rendered.bytes).text;
+  assert.ok(text.includes("## Slide 2\n01\n첫 장"), text);
+  assert.ok(text.includes("## Slide 3\n첫 장\n내용 하나"), text);
+  assert.ok(text.includes("## Slide 4\n02\n둘째 장"), text);
+  // The divider takes the section layout; its content slide does not.
+  assert.ok(partOf(rendered.bytes, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout3.xml"));
+  assert.ok(partOf(rendered.bytes, "ppt/slides/_rels/slide3.xml.rels").includes("slideLayout2.xml"));
+});
+
+test("a cover keeps its subtitle and sends everything else onward", () => {
+  const rendered = renderPptx(
+    parseMarkdown("# 제목\n\n부제목 한 줄\n\n- 항목 하나\n- 항목 둘"),
+    { title: "t", created: CREATED },
+  );
+  assert.equal(rendered.slides, 2, "the list moves past the cover");
+  const text = pptxToText(rendered.bytes).text;
+  assert.ok(text.includes("## Slide 1\n제목\n부제목 한 줄"), text);
+  assert.ok(text.includes("## Slide 2\n• 항목 하나"), text);
+});
+
+test("a final thank-you section is a closing slide; the same title mid-deck is not", () => {
+  const closing = build("# 표지\n\n## 본론\n\n내용\n\n## 감사합니다\n\n문의: docs@example.com");
+  assert.ok(partOf(closing, "ppt/slides/_rels/slide3.xml.rels").includes("slideLayout4.xml"));
+  // Mid-deck, the same heading is an ordinary content slide.
+  const middle = build("# 표지\n\n## 감사합니다\n\n내용\n\n## 다음 주제\n\n본문");
+  assert.ok(partOf(middle, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout2.xml"));
+});
+
+test("the deck's name sits on the content layout, out of the slides' text", () => {
+  const bytes = renderPptx(parseMarkdown("## 본문\n\n내용"), {
+    title: "분기 보고서",
+    created: CREATED,
+  }).bytes;
+  assert.ok(
+    partOf(bytes, "ppt/slideLayouts/slideLayout2.xml").includes("분기 보고서"),
+    "the footer names the deck on the layout",
+  );
+  assert.equal(
+    pptxToText(bytes).text.includes("분기 보고서"),
+    false,
+    "layout text must stay out of extraction",
+  );
+});
+
+test("the divider's ground and the cover's band are layout furniture, not slide shapes", () => {
+  const bytes = build("# 표지\n\n# 장");
+  // The section layout carries the brand field; the divider slide itself only
+  // carries text, so a reader editing it never steps around furniture.
+  assert.ok(partOf(bytes, "ppt/slideLayouts/slideLayout3.xml").includes('<p:bg>'));
+  assert.equal(partOf(bytes, "ppt/slides/slide2.xml").includes("<p:bg>"), false);
+  assert.ok(partOf(bytes, "ppt/slideLayouts/slideLayout1.xml").includes('name="Band"'));
 });

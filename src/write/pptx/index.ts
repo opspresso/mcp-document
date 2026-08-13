@@ -17,6 +17,7 @@ import { buildZip } from "../../zip.js";
 import type { MarkdownDocument } from "../../markdown.js";
 import { part } from "./ooxml.js";
 import {
+  LAYOUT_COUNT,
   appPropertiesXml,
   contentTypesXml,
   corePropertiesXml,
@@ -32,9 +33,19 @@ import {
   tableStylesXml,
   themeXml,
   viewPropsXml,
+  type LayoutIndex,
 } from "./package.js";
 import { plan } from "./planner.js";
 import { Renderer } from "./render.js";
+import type { Slide } from "./types.js";
+
+/** Which layout part carries each archetype's design. */
+const LAYOUT_OF: Record<Slide["type"], LayoutIndex> = {
+  cover: 1,
+  content: 2,
+  section: 3,
+  closing: 4,
+};
 
 export interface PptxOptions {
   title: string;
@@ -64,17 +75,20 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     "ppt/tableStyles.xml": part(tableStylesXml()),
     "ppt/slideMasters/slideMaster1.xml": part(slideMasterXml()),
     "ppt/slideMasters/_rels/slideMaster1.xml.rels": part(slideMasterRelsXml()),
-    "ppt/slideLayouts/slideLayout1.xml": part(slideLayoutXml(true)),
-    "ppt/slideLayouts/slideLayout2.xml": part(slideLayoutXml(false)),
-    "ppt/slideLayouts/_rels/slideLayout1.xml.rels": part(slideLayoutRelsXml()),
-    "ppt/slideLayouts/_rels/slideLayout2.xml.rels": part(slideLayoutRelsXml()),
   };
+
+  for (let layout = 1; layout <= LAYOUT_COUNT; layout += 1) {
+    parts[`ppt/slideLayouts/slideLayout${layout}.xml`] = part(
+      slideLayoutXml(layout as LayoutIndex, options.title),
+    );
+    parts[`ppt/slideLayouts/_rels/slideLayout${layout}.xml.rels`] = part(slideLayoutRelsXml());
+  }
 
   slides.forEach((slide, index) => {
     const rendered = renderer.slide(slide, index);
     parts[`ppt/slides/slide${index + 1}.xml`] = part(rendered.xml);
     parts[`ppt/slides/_rels/slide${index + 1}.xml.rels`] = part(
-      slideRelsXml(slide.type === "cover", rendered.links),
+      slideRelsXml(LAYOUT_OF[slide.type], rendered.links),
     );
   });
 

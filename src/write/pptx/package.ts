@@ -10,17 +10,24 @@
  */
 
 import { escapeXml } from "../../xml.js";
-import { CHART, PALETTE } from "../theme.js";
+import { CHART, DECK, PALETTE, centiPoints } from "../theme.js";
 import { PRODUCER } from "../../version.js";
 import {
   BODY_BOX,
   BODY_SIZE,
+  CLOSING_BODY_BOX,
+  CLOSING_TITLE_BOX,
   CONTENT_WIDTH,
-  COVER_BODY_BOX,
+  COVER_BAND_WIDTH,
   COVER_TITLE_BOX,
+  HEAD_RULE,
+  HEAD_RULE_GAP,
+  NUMBER_BOX,
+  SECTION_TITLE_BOX,
   SIDE_MARGIN,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
+  SUBTITLE_BOX,
   TITLE_BOX,
   TITLE_SIZE,
 } from "./layout.js";
@@ -39,6 +46,16 @@ import {
   relationships,
 } from "./ooxml.js";
 
+/**
+ * The four layouts, in part order: a slide names its archetype's layout, and
+ * PowerPoint's "New Slide" gallery offers the same four back to the reader.
+ * Cover and content keep parts 1 and 2, which is where every earlier release
+ * put them.
+ */
+export const LAYOUT_COUNT = 4;
+
+export type LayoutIndex = 1 | 2 | 3 | 4;
+
 export function contentTypesXml(slides: number): string {
   const override = (path: string, type: string): string =>
     `<Override PartName="${path}" ContentType="${type}"/>`;
@@ -49,8 +66,9 @@ export function contentTypesXml(slides: number): string {
     '<Default Extension="xml" ContentType="application/xml"/>' +
     override("/ppt/presentation.xml", `${presentationml}.presentation.main+xml`) +
     override("/ppt/slideMasters/slideMaster1.xml", `${presentationml}.slideMaster+xml`) +
-    override("/ppt/slideLayouts/slideLayout1.xml", `${presentationml}.slideLayout+xml`) +
-    override("/ppt/slideLayouts/slideLayout2.xml", `${presentationml}.slideLayout+xml`) +
+    Array.from({ length: LAYOUT_COUNT }, (_, index) =>
+      override(`/ppt/slideLayouts/slideLayout${index + 1}.xml`, `${presentationml}.slideLayout+xml`),
+    ).join("") +
     Array.from({ length: slides }, (_, index) =>
       override(`/ppt/slides/slide${index + 1}.xml`, `${presentationml}.slide+xml`),
     ).join("") +
@@ -218,21 +236,149 @@ function layoutPlaceholder(id: number, name: string, placeholder: string, box: {
   );
 }
 
-export function slideLayoutXml(cover: boolean): string {
-  const title = cover ? COVER_TITLE_BOX : TITLE_BOX;
-  const body = cover ? COVER_BODY_BOX : BODY_BOX;
+/**
+ * A filled rectangle with nothing to say — a band, a rule, a ground.
+ *
+ * These live on layouts, never on slides: PowerPoint renders a layout's shapes
+ * under the slide's, a reader editing the deck cannot select them by accident,
+ * and this server's own text extractor never sees them, because it reads only
+ * `ppt/slides/*`. That is exactly where a template keeps its furniture.
+ */
+function decorRect(
+  id: number,
+  name: string,
+  box: { x: number; y: number; width: number; height: number },
+  colour: string,
+): string {
   return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
+    `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+    `<a:solidFill><a:srgbClr val="${colour}"/></a:solidFill>` +
+    "</p:spPr>" +
+    // Mandatory in practice, whatever the schema says: a p:sp without a txBody
+    // is a shape PowerPoint offers to repair.
+    '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>' +
+    "</p:sp>"
+  );
+}
+
+/** A static line of layout text — the footer that names the deck on every content slide. */
+function decorText(
+  id: number,
+  name: string,
+  box: { x: number; y: number; width: number; height: number },
+  text: string,
+): string {
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
+    `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
+    '<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0"/><a:lstStyle/>' +
+    `<a:p><a:pPr algn="l"/><a:r><a:rPr lang="en-US" sz="${centiPoints(DECK.caption)}" dirty="0">` +
+    `<a:solidFill><a:srgbClr val="${PALETTE.inkMuted}"/></a:solidFill></a:rPr>` +
+    `<a:t>${escapeXml(text)}</a:t></a:r></a:p></p:txBody></p:sp>`
+  );
+}
+
+/** `p:bg` for the layouts whose ground is part of the design. */
+function background(colour: string): string {
+  return (
+    `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${colour}"/></a:solidFill>` +
+    "<a:effectLst/></p:bgPr></p:bg>"
+  );
+}
+
+/** The accent rule a cover or divider carries above its title. */
+function headRule(id: number, x: number, titleY: number, colour: string): string {
+  return decorRect(
+    id,
+    `Rule ${id}`,
+    { x, y: titleY - HEAD_RULE_GAP - HEAD_RULE.height, width: HEAD_RULE.width, height: HEAD_RULE.height },
+    colour,
+  );
+}
+
+/**
+ * One slide layout, `1` to `LAYOUT_COUNT`.
+ *
+ * The design of each archetype lives here rather than on its slides: the
+ * cover's lavender ground and brand band, the section divider's brand field,
+ * the content footer that names the deck. `deckTitle` is what that footer says.
+ */
+export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
+  const wrap = (
+    type: string,
+    name: string,
+    bg: string | undefined,
+    shapes: readonly string[],
+  ): string =>
     `<p:sldLayout xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}" ` +
-    `type="${cover ? "title" : "obj"}" preserve="1">` +
-    `<p:cSld name="${cover ? "Title Slide" : "Title and Content"}"><p:spTree>` +
+    `type="${type}" preserve="1">` +
+    `<p:cSld name="${name}">${bg ?? ""}<p:spTree>` +
     '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
     '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +
     '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>' +
-    layoutPlaceholder(2, "Title 1", '<p:ph type="title"/>', title) +
-    layoutPlaceholder(3, "Body 2", '<p:ph type="body" idx="1"/>', body) +
+    shapes.join("") +
     "</p:spTree></p:cSld>" +
-    "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"
-  );
+    "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>";
+
+  switch (index) {
+    case 1:
+      // The cover: the console's lavender, a brand band down the left edge, a
+      // rule above where the title lands.
+      return wrap("title", "Cover", background(PALETTE.surfaceTint), [
+        decorRect(
+          2,
+          "Band",
+          { x: 0, y: 0, width: COVER_BAND_WIDTH, height: SLIDE_HEIGHT },
+          PALETTE.brand,
+        ),
+        headRule(3, SIDE_MARGIN, COVER_TITLE_BOX.y, PALETTE.brand),
+        layoutPlaceholder(4, "Title 1", '<p:ph type="title"/>', COVER_TITLE_BOX),
+        layoutPlaceholder(5, "Subtitle 2", '<p:ph type="body" idx="1"/>', SUBTITLE_BOX),
+      ]);
+    case 2:
+      // Content: white ground, the deck's name quietly in the footer. The
+      // accent bar under the title stays on the slide, which knows whether
+      // there is a title to underline.
+      return wrap("obj", "Title and Content", undefined, [
+        decorText(
+          2,
+          "Footer",
+          {
+            x: SIDE_MARGIN,
+            y: SLIDE_HEIGHT - SIDE_MARGIN,
+            width: Math.floor(CONTENT_WIDTH / 2),
+            height: NUMBER_BOX.height,
+          },
+          deckTitle,
+        ),
+        layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', TITLE_BOX),
+        layoutPlaceholder(4, "Body 2", '<p:ph type="body" idx="1"/>', BODY_BOX),
+      ]);
+    case 3:
+      // A section divider: a full brand field, the rule in the lighter brand
+      // above the title. The ordinal is content and comes with the slide.
+      return wrap("secHead", "Section", background(PALETTE.brand), [
+        headRule(2, SIDE_MARGIN, SECTION_TITLE_BOX.y, PALETTE.brandLight),
+        layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', SECTION_TITLE_BOX),
+      ]);
+    case 4:
+      // The closing: the cover's ground, and a centred rule above the line.
+      return wrap("cust", "Closing", background(PALETTE.surfaceTint), [
+        headRule(
+          2,
+          Math.round((SLIDE_WIDTH - HEAD_RULE.width) / 2),
+          CLOSING_TITLE_BOX.y,
+          PALETTE.brand,
+        ),
+        layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', CLOSING_TITLE_BOX),
+        layoutPlaceholder(4, "Body 2", '<p:ph type="body" idx="1"/>', CLOSING_BODY_BOX),
+      ]);
+  }
 }
 
 export function slideLayoutRelsXml(): string {
@@ -261,8 +407,12 @@ export function slideMasterXml(): string {
     '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" ' +
     'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" ' +
     'folHlink="folHlink"/>' +
-    '<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/>' +
-    '<p:sldLayoutId id="2147483650" r:id="rId2"/></p:sldLayoutIdLst>' +
+    "<p:sldLayoutIdLst>" +
+    Array.from(
+      { length: LAYOUT_COUNT },
+      (_, index) => `<p:sldLayoutId id="${2147483649 + index}" r:id="rId${index + 1}"/>`,
+    ).join("") +
+    "</p:sldLayoutIdLst>" +
     `<p:txStyles><p:titleStyle>${style(TITLE_SIZE)}</p:titleStyle>` +
     `<p:bodyStyle>${style(BODY_SIZE)}</p:bodyStyle>` +
     `<p:otherStyle>${style(BODY_SIZE)}</p:otherStyle></p:txStyles>` +
@@ -272,19 +422,16 @@ export function slideMasterXml(): string {
 
 export function slideMasterRelsXml(): string {
   return relationships([
-    relationship("rId1", SLIDE_LAYOUT_TYPE, "../slideLayouts/slideLayout1.xml"),
-    relationship("rId2", SLIDE_LAYOUT_TYPE, "../slideLayouts/slideLayout2.xml"),
-    relationship("rId3", THEME_TYPE, "../theme/theme1.xml"),
+    ...Array.from({ length: LAYOUT_COUNT }, (_, index) =>
+      relationship(`rId${index + 1}`, SLIDE_LAYOUT_TYPE, `../slideLayouts/slideLayout${index + 1}.xml`),
+    ),
+    relationship(`rId${LAYOUT_COUNT + 1}`, THEME_TYPE, "../theme/theme1.xml"),
   ]);
 }
 
-export function slideRelsXml(cover: boolean, links: readonly string[]): string {
+export function slideRelsXml(layout: LayoutIndex, links: readonly string[]): string {
   return relationships([
-    relationship(
-      "rId1",
-      SLIDE_LAYOUT_TYPE,
-      `../slideLayouts/slideLayout${cover ? 1 : 2}.xml`,
-    ),
+    relationship("rId1", SLIDE_LAYOUT_TYPE, `../slideLayouts/slideLayout${layout}.xml`),
     ...links.map((href, index) =>
       relationship(`rId${index + 2}`, HYPERLINK_TYPE, href, true),
     ),

@@ -5,6 +5,13 @@
  * on the slide, and this module decides what DrawingML says it. Runs of text
  * sit in one box; a table is a frame of its own, so a body is stacked rather
  * than being a single shape.
+ *
+ * What is *not* here is decoration. The cover's ground and band, the section
+ * slide's brand field, the content footer — those live on the slide layouts in
+ * `package.ts`, which is where PowerPoint itself keeps a template's design.
+ * A slide carries its content and nothing else, which is what lets a reader
+ * edit the deck without stepping around furniture, and keeps the decoration
+ * out of every text extractor's way.
  */
 
 import { escapeXml } from "../../xml.js";
@@ -14,17 +21,25 @@ import { DECK, PALETTE, centiPoints } from "../theme.js";
 import {
   BODY_BOX,
   BODY_SIZE,
+  CLOSING_BODY_BOX,
+  CLOSING_TITLE_BOX,
+  CLOSING_TITLE_SIZE,
   CONTENT_WIDTH,
-  COVER_BODY_BOX,
   COVER_TITLE_BOX,
   COVER_TITLE_SIZE,
   INDENT_EMU,
   LINE_HEIGHT,
   NUMBER_BOX,
+  ORDINAL_SIZE,
   ROW_HEIGHT,
+  SECTION_ORDINAL_BOX,
+  SECTION_TITLE_BOX,
+  SECTION_TITLE_SIZE,
   SIDE_MARGIN,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
+  SUBTITLE_BOX,
+  SUBTITLE_SIZE,
   TITLE_BOX,
   TITLE_RULE,
   TITLE_SIZE,
@@ -41,16 +56,22 @@ const HEADER_FILL = PALETTE.brand;
 
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
+/** How transparent a divider's ordinal is: present, but a mark rather than text. */
+const ORDINAL_ALPHA = 45000;
+
 /** `sz` and the rest of `a:rPr`, for one run inside a paragraph of a given style. */
 function runProperties(run: Run, style: Style, linkId?: string): string {
   const bold = run.bold || style.bold;
   const italic = run.italic || style.italic;
   const mono = run.code || style.mono;
   const colour = run.href ? LINK_COLOUR : (style.colour ?? INK);
+  const fill = style.alpha
+    ? `<a:srgbClr val="${colour}"><a:alpha val="${style.alpha}"/></a:srgbClr>`
+    : `<a:srgbClr val="${colour}"/>`;
   return (
     `<a:rPr lang="en-US" sz="${style.size}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""}` +
     `${run.href ? ' u="sng"' : ""} dirty="0">` +
-    `<a:solidFill><a:srgbClr val="${colour}"/></a:solidFill>` +
+    `<a:solidFill>${fill}</a:solidFill>` +
     // Only the Latin face is named, and only for code. Naming a face for prose
     // is what `write/docx.ts` refuses to do for the same reason: a font chosen
     // here is a font the reader's machine may not have, and the substitute is
@@ -103,8 +124,14 @@ export class Renderer {
       runs.length === 0
         ? `<a:endParaRPr lang="en-US" sz="${style.size}"/>`
         : runs
-            .map((run) =>
-              runElement(run, style, run.href ? this.relationshipFor(run.href) : undefined),
+            .map((run, index) =>
+              runElement(
+                run,
+                // The first run is the marker when the style says so — the one
+                // drop of brand a content line carries.
+                index === 0 && style.marker ? { ...style, colour: style.marker } : style,
+                run.href ? this.relationshipFor(run.href) : undefined,
+              ),
             )
             .join("");
     return `<a:p>${properties}${body}</a:p>`;
@@ -218,7 +245,7 @@ export class Renderer {
    * paragraph it leaves behind lands at the end of the slide, where `normalize`
    * drops it.
    */
-  private slideNumber(ordinal: number): string {
+  private slideNumber(ordinal: number, colour: string): string {
     const id = this.nextId;
     this.nextId += 1;
     const box = {
@@ -236,7 +263,7 @@ export class Renderer {
       '<a:p><a:pPr algn="r"/>' +
       `<a:fld id="${NUMBER_FIELD_ID}" type="slidenum">` +
       `<a:rPr lang="en-US" sz="${centiPoints(DECK.caption)}">` +
-      `<a:solidFill><a:srgbClr val="${MUTED}"/></a:solidFill></a:rPr>` +
+      `<a:solidFill><a:srgbClr val="${colour}"/></a:solidFill></a:rPr>` +
       // The cached text every native fld carries. PowerPoint recomputes it on
       // open; the reader skips fld contents, so it never reaches extraction.
       `<a:t>${ordinal}</a:t>` +
@@ -244,7 +271,7 @@ export class Renderer {
     );
   }
 
-  /** The short brand rule under a slide's title. A shape, because a slide has no borders. */
+  /** The short brand rule under a content slide's title. */
   private accentBar(y: number): string {
     const id = this.nextId;
     this.nextId += 1;
@@ -253,7 +280,7 @@ export class Renderer {
       `<p:spPr><a:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
       `<a:ext cx="${TITLE_RULE.width}" cy="${TITLE_RULE.height}"/></a:xfrm>` +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
-      `<a:solidFill><a:srgbClr val="${PALETTE.brandLight}"/></a:solidFill>` +
+      `<a:solidFill><a:srgbClr val="${PALETTE.brand}"/></a:solidFill>` +
       "</p:spPr>" +
       // The empty body is not optional in practice. `p:txBody` is `minOccurs="0"`
       // in the schema, and PowerPoint still calls a `p:sp` without one damaged
@@ -265,47 +292,14 @@ export class Renderer {
     );
   }
 
-  /** One slide, and the hyperlink targets it turned out to need. */
-  slide(slide: Slide, index: number): { xml: string; links: readonly string[] } {
-    this.reset();
-    const cover = slide.type === "cover";
-    const titleBox = cover ? COVER_TITLE_BOX : TITLE_BOX;
-    const bodyBox = cover ? COVER_BODY_BOX : BODY_BOX;
-    const shapes: string[] = [];
-    /**
-     * Shapes that carry no content, appended after everything else.
-     *
-     * Their position on the slide is set by `a:xfrm` rather than by their place
-     * in the tree, so writing them last costs nothing visually — and it is what
-     * keeps their empty paragraphs out of the extracted text, where they would
-     * otherwise land as blank lines in the middle of a slide.
-     */
-    const decorations: string[] = [];
-
-    if (slide.title) {
-      shapes.push(
-        this.textShape(
-          `Title ${index + 1}`,
-          { x: SIDE_MARGIN, y: titleBox.y, width: CONTENT_WIDTH, height: titleBox.height },
-          this.paragraph(slide.title, {
-            size: cover ? COVER_TITLE_SIZE : TITLE_SIZE,
-            bold: true,
-            colour: PALETTE.brand,
-            indent: 0,
-          }),
-          '<p:ph type="title"/>',
-        ),
-      );
-      if (!cover) {
-        // The cover has a tinted ground of its own and does not need the rule;
-        // on every other slide this is the whole of the identity.
-        decorations.push(this.accentBar(titleBox.y + titleBox.height + TITLE_RULE.gap));
-      }
-    }
-
-    // Runs of text sit in one box; a table is a frame of its own, so the body is
-    // stacked rather than being a single shape.
-    let y = bodyBox.y;
+  /** Pieces stacked into shapes from `startY` down. Text shares boxes; tables get frames. */
+  private stack(
+    shapes: string[],
+    pieces: readonly Piece[],
+    startY: number,
+    restyle?: (style: Style) => Style,
+  ): void {
+    let y = startY;
     let paragraphs: string[] = [];
     let lines = 0;
     /** The first text box claims the layout's body placeholder; later ones cannot. */
@@ -330,22 +324,139 @@ export class Renderer {
       lines = 0;
     };
 
-    for (const piece of slide.pieces) {
+    for (const piece of pieces) {
       if (piece.kind === "table") {
         flushText();
         shapes.push(this.table(piece, y));
         y += linesOf(piece) * LINE_HEIGHT;
         continue;
       }
-      paragraphs.push(this.paragraph(piece.runs, piece.style));
+      paragraphs.push(this.paragraph(piece.runs, restyle ? restyle(piece.style) : piece.style));
       lines += linesOf(piece);
     }
     flushText();
+  }
 
-    // Not on the cover: a title page with a "1" on it is a title page nobody
-    // designed.
-    if (!cover) {
-      decorations.push(this.slideNumber(index + 1));
+  /** The title shape every archetype shares, differing only in box and style. */
+  private titleShape(
+    title: readonly Run[],
+    index: number,
+    box: { y: number; height: number },
+    style: Style,
+  ): string {
+    return this.textShape(
+      `Title ${index + 1}`,
+      { x: SIDE_MARGIN, y: box.y, width: CONTENT_WIDTH, height: box.height },
+      this.paragraph(title, style),
+      '<p:ph type="title"/>',
+    );
+  }
+
+  /** One slide, and the hyperlink targets it turned out to need. */
+  slide(slide: Slide, index: number): { xml: string; links: readonly string[] } {
+    this.reset();
+    const shapes: string[] = [];
+    /**
+     * Shapes that carry no content, appended after everything else.
+     *
+     * Their position on the slide is set by `a:xfrm` rather than by their place
+     * in the tree, so writing them last costs nothing visually — and it is what
+     * keeps their empty paragraphs out of the extracted text, where they would
+     * otherwise land as blank lines in the middle of a slide.
+     */
+    const decorations: string[] = [];
+
+    switch (slide.type) {
+      case "cover": {
+        shapes.push(
+          this.titleShape(slide.title, index, COVER_TITLE_BOX, {
+            size: COVER_TITLE_SIZE,
+            bold: true,
+            indent: 0,
+          }),
+        );
+        if (slide.subtitle) {
+          shapes.push(
+            this.textShape(
+              "Subtitle",
+              { x: SIDE_MARGIN, y: SUBTITLE_BOX.y, width: CONTENT_WIDTH, height: SUBTITLE_BOX.height },
+              this.paragraph(slide.subtitle, { size: SUBTITLE_SIZE, colour: MUTED, indent: 0 }),
+              '<p:ph type="body" idx="1"/>',
+            ),
+          );
+        }
+        break;
+      }
+
+      case "section": {
+        // The ordinal leads the tree so extraction reads "01" then the title —
+        // the order the slide is read in.
+        shapes.push(
+          this.textShape(
+            "Ordinal",
+            {
+              x: SIDE_MARGIN,
+              y: SECTION_ORDINAL_BOX.y,
+              width: CONTENT_WIDTH,
+              height: SECTION_ORDINAL_BOX.height,
+            },
+            this.paragraph([{ text: String(slide.ordinal).padStart(2, "0") }], {
+              size: ORDINAL_SIZE,
+              bold: true,
+              colour: PALETTE.onBrand,
+              alpha: ORDINAL_ALPHA,
+              indent: 0,
+            }),
+          ),
+        );
+        shapes.push(
+          this.titleShape(slide.title, index, SECTION_TITLE_BOX, {
+            size: SECTION_TITLE_SIZE,
+            bold: true,
+            colour: PALETTE.onBrand,
+            indent: 0,
+          }),
+        );
+        decorations.push(this.slideNumber(index + 1, PALETTE.brandTint));
+        break;
+      }
+
+      case "closing": {
+        shapes.push(
+          this.titleShape(slide.title, index, CLOSING_TITLE_BOX, {
+            size: CLOSING_TITLE_SIZE,
+            bold: true,
+            indent: 0,
+            align: "center",
+          }),
+        );
+        // What follows the goodbye — a contact line, a link — is centred with
+        // it; a table here keeps its own alignment.
+        this.stack(shapes, slide.pieces, CLOSING_BODY_BOX.y, (style) => ({
+          ...style,
+          align: style.align ?? "center",
+          indent: 0,
+        }));
+        break;
+      }
+
+      case "content": {
+        if (slide.title) {
+          shapes.push(
+            this.titleShape(slide.title, index, TITLE_BOX, {
+              size: TITLE_SIZE,
+              bold: true,
+              indent: 0,
+            }),
+          );
+          // The one brand mark a content slide carries itself: the layout
+          // cannot know whether a slide has a title to underline.
+          decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
+        }
+        this.stack(shapes, slide.pieces, BODY_BOX.y);
+        decorations.push(this.slideNumber(index + 1, MUTED));
+        break;
+      }
     }
 
     if (shapes.length === 0) {
@@ -354,7 +465,7 @@ export class Renderer {
       shapes.push(
         this.textShape(
           "Body 1",
-          { x: SIDE_MARGIN, y: bodyBox.y, width: CONTENT_WIDTH, height: LINE_HEIGHT },
+          { x: SIDE_MARGIN, y: BODY_BOX.y, width: CONTENT_WIDTH, height: LINE_HEIGHT },
           this.paragraph([], BODY_STYLE),
           '<p:ph type="body" idx="1"/>',
         ),
@@ -365,12 +476,6 @@ export class Renderer {
     return {
       xml:
         `<p:sld xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld>` +
-        // The console's lavender, kept for the one slide that can carry a
-        // full-bleed field without costing anything: the cover.
-        (cover
-          ? `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${PALETTE.surfaceTint}"/></a:solidFill>` +
-            "<a:effectLst/></p:bgPr></p:bg>"
-          : "") +
         "<p:spTree>" +
         '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
         '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +

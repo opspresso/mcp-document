@@ -28,13 +28,47 @@ export const CONTENT_WIDTH = SLIDE_WIDTH - SIDE_MARGIN * 2;
 export const TITLE_BOX = { y: 457200, height: 1143000 };
 export const BODY_BOX = { y: 1714500, height: 4457700 };
 
-/** The opening slide, whose title sits where a reader expects a cover's to. */
-export const COVER_TITLE_BOX = { y: 2133600, height: 1371600 };
-export const COVER_BODY_BOX = { y: 3657600, height: 1371600 };
+/**
+ * The cover's composition: a title in the upper-middle third, a subtitle under
+ * it, and everything else on the slide belonging to the layout rather than the
+ * content. What a cover does not hold any more is arbitrary pieces — a list on
+ * a title page is a list that belongs on the next slide, and the planner sends
+ * it there.
+ */
+export const COVER_TITLE_BOX = { y: 2209800, height: 1600200 };
+export const SUBTITLE_BOX = { y: 3886200, height: 914400 };
+
+/** The vertical brand band down the cover's left edge. */
+export const COVER_BAND_WIDTH = 274320;
+
+/**
+ * A section divider: the ordinal above, the title below, a rule between.
+ * The boxes are generous because a 66pt numeral and a 40pt title need air —
+ * a divider that is cramped reads as a content slide that lost its body.
+ */
+export const SECTION_ORDINAL_BOX = { y: 1524000, height: 1066800 };
+export const SECTION_TITLE_BOX = { y: 3048000, height: 1219200 };
+
+/** The closing slide, centred where the cover is flush left. */
+export const CLOSING_TITLE_BOX = { y: 2590800, height: 1143000 };
+export const CLOSING_BODY_BOX = { y: 3886200, height: 1371600 };
+
+/**
+ * The accent rule a cover and a divider carry above their titles — wider and
+ * heavier than the one under a content slide's title, because on those two
+ * slides it is the only horizontal mark on the page.
+ */
+export const HEAD_RULE = { width: emu(48), height: emu(4.5) };
+/** Where the rule sits: this far above the title box it introduces. */
+export const HEAD_RULE_GAP = emu(15);
 
 /** Hundredths of a point, which is what `sz` is in. */
 export const TITLE_SIZE = centiPoints(DECK.title);
 export const COVER_TITLE_SIZE = centiPoints(DECK.coverTitle);
+export const SUBTITLE_SIZE = centiPoints(DECK.subtitle);
+export const SECTION_TITLE_SIZE = centiPoints(DECK.sectionTitle);
+export const ORDINAL_SIZE = centiPoints(DECK.ordinal);
+export const CLOSING_TITLE_SIZE = centiPoints(DECK.closingTitle);
 export const BODY_SIZE = centiPoints(DECK.body);
 export const CODE_SIZE = centiPoints(DECK.code);
 /** Headings 3 to 6, which stay in the body rather than opening a slide. */
@@ -68,7 +102,8 @@ export const ROW_HEIGHT = Math.round(LINE_HEIGHT * 1.5);
  * is the same approximation `write/table.ts` makes when it shares out columns.
  */
 export const BODY_LINES = Math.floor(BODY_BOX.height / LINE_HEIGHT);
-export const COVER_LINES = Math.floor(COVER_BODY_BOX.height / LINE_HEIGHT);
+/** What fits under a closing slide's centred title. */
+export const CLOSING_LINES = Math.floor(CLOSING_BODY_BOX.height / LINE_HEIGHT);
 export const COLUMNS = 45;
 
 /** One indent step, as a share of the line — a list level, or a quote's bar. */
