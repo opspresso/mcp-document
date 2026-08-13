@@ -139,9 +139,15 @@ description states it rather than guessing.
 Syntax that is not supported — footnotes, raw HTML — passes through as the
 characters that were written. Refusing to produce a document over one line of it
 is a much worse outcome than a stray `<div>` a reader can see. An image is the
-exception: nothing here fetches or embeds pictures, so `![alt](url)` becomes a
-link labelled with its alt text, which keeps both the description and the
-address.
+exception: nothing here fetches pictures, so `![alt](url)` becomes a link
+labelled with its alt text, which keeps both the description and the address.
+The one way an image gets *into* a document is `render_document`'s optional
+`assets` argument — PNG or JPEG bytes sent by name alongside the Markdown,
+referenced as `![caption](asset://name)`, and embedded by the pptx renderer
+(see below). A referenced asset nobody sent is refused by name, and SVG is
+refused with the fix stated: PowerPoint's `svgBlip` demands a raster fallback
+part beside the vector one, and producing that means rasterising, which this
+repository does not do. Rasterise first, send the PNG.
 
 Lists carry **literal markers** in all four formats rather than a numbering
 definition. What real numbering buys is the reader's editor renumbering a list
@@ -224,7 +230,9 @@ figures (`- 99.99% Availability`) becomes big-number **metrics**; a lone block
 quote with a `— author` line becomes a **quote** slide; two `###`s under an
 "A vs B" title become a two-column **comparison**; three to five short numbered
 steps become a **process** flow with arrows; date-led steps (`1. Q1 파일럿`)
-become a **timeline**. Every rule is conservative — a section that does not
+become a **timeline**; a section that is exactly one `![caption](asset://…)`
+image becomes an **image** slide, the picture placed at its aspect ratio with
+the caption under it. Every rule is conservative — a section that does not
 match exactly stays a plain content slide, because a layout forced onto content
 it does not fit is worse than no layout. Wrapping one such group in
 `:::cards` … `:::` (also `metrics`, `comparison`, `process`, `timeline`,

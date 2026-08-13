@@ -20,6 +20,7 @@ export const SLIDE_MASTER_TYPE = `${R}/slideMaster`;
 export const SLIDE_TYPE = `${R}/slide`;
 export const THEME_TYPE = `${R}/theme`;
 export const HYPERLINK_TYPE = `${R}/hyperlink`;
+export const IMAGE_TYPE = `${R}/image`;
 
 /**
  * PowerPoint's own default table style, referenced by GUID.

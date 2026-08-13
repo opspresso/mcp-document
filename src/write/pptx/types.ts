@@ -100,6 +100,14 @@ export type Slide =
   | { type: "comparison"; title: Run[]; columns: [CompareColumn, CompareColumn] }
   | { type: "process"; title: Run[]; steps: Run[][] }
   | { type: "timeline"; title: Run[]; milestones: Milestone[] }
+  | {
+      /** A section that is one `![alt](asset://name)` and nothing else. */
+      type: "image";
+      title: Run[];
+      /** The asset's name — the key the caller sent the bytes under. */
+      asset: string;
+      caption: Run[];
+    }
   | { type: "closing"; title: Run[]; pieces: Piece[] };
 
 export interface Presentation {

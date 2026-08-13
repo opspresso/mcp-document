@@ -35,6 +35,8 @@ import {
   COVER_TITLE_BOX,
   COVER_TITLE_SIZE,
   GRID_GAP,
+  IMAGE_BOX,
+  IMAGE_CAPTION_BOX,
   INDENT_EMU,
   LINE_HEIGHT,
   METRIC_LABEL_BOX,
@@ -68,7 +70,20 @@ import {
   linesOf,
 } from "./layout.js";
 import { A, NUMBER_FIELD_ID, P, R, TABLE_STYLE_ID } from "./ooxml.js";
+import { fitInto, type ImageSize } from "./image.js";
 import type { Piece, Slide, Style } from "./types.js";
+
+/** What a slide's rels part needs to say about one relationship, in rId order. */
+export interface SlideRelationship {
+  kind: "hyperlink" | "image";
+  target: string;
+}
+
+/** Where a named asset's bytes ended up, and how big the picture is. */
+export interface MediaEntry {
+  file: string;
+  size: ImageSize;
+}
 
 const INK = PALETTE.ink;
 const LINK_COLOUR = PALETTE.brandDeep;
@@ -124,22 +139,29 @@ function runElement(run: Run, style: Style, linkId?: string): string {
 }
 
 export class Renderer {
-  /** Hyperlink targets for the slide being written, in the order first seen. */
-  private links: string[] = [];
+  /** Relationships for the slide being written — links and pictures, in rId order. */
+  private rels: SlideRelationship[] = [];
   /** Shape ids are unique within a slide's tree; 1 is the tree itself. */
   private nextId = 2;
 
-  /** Start a slide, discarding the previous one's links and ids. */
+  /**
+   * Where each named asset's media part lives. The map is the whole deck's,
+   * built by `index.ts` before any slide renders, so two slides showing the
+   * same picture share one part.
+   */
+  constructor(private readonly media: ReadonlyMap<string, MediaEntry> = new Map()) {}
+
+  /** Start a slide, discarding the previous one's relationships and ids. */
   private reset(): void {
-    this.links = [];
+    this.rels = [];
     this.nextId = 2;
   }
 
-  /** rId1 is the layout, so hyperlinks start above it. */
-  private relationshipFor(href: string): string {
-    let index = this.links.indexOf(href);
+  /** rId1 is the layout, so everything else starts above it. */
+  private relationshipFor(kind: SlideRelationship["kind"], target: string): string {
+    let index = this.rels.findIndex((rel) => rel.kind === kind && rel.target === target);
     if (index === -1) {
-      index = this.links.push(href) - 1;
+      index = this.rels.push({ kind, target }) - 1;
     }
     return `rId${index + 2}`;
   }
@@ -163,7 +185,7 @@ export class Renderer {
                 // The first run is the marker when the style says so — the one
                 // drop of brand a content line carries.
                 index === 0 && style.marker ? { ...style, colour: style.marker } : style,
-                run.href ? this.relationshipFor(run.href) : undefined,
+                run.href ? this.relationshipFor("hyperlink", run.href) : undefined,
               ),
             )
             .join("");
@@ -441,6 +463,28 @@ export class Renderer {
     );
   }
 
+  /**
+   * A picture, placed at its aspect ratio.
+   *
+   * `noChangeAspect` is what keeps a reader's later resize honest, and the
+   * empty `nvPr` is deliberate: a picture in a placeholder inherits the
+   * placeholder's box, and this one has its own.
+   */
+  private picture(name: string, entry: MediaEntry): string {
+    const id = this.nextId;
+    this.nextId += 1;
+    const relationship = this.relationshipFor("image", `../media/${entry.file}`);
+    const placed = fitInto(entry.size, IMAGE_BOX);
+    return (
+      `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${escapeXml(name)}"/>` +
+      '<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>' +
+      `<p:blipFill><a:blip r:embed="${relationship}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="${placed.x}" y="${placed.y}"/>` +
+      `<a:ext cx="${placed.width}" cy="${placed.height}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+    );
+  }
+
   /** What every titled slide on the content layout gets: title, bar, number. */
   private contentChrome(
     title: readonly Run[],
@@ -453,8 +497,8 @@ export class Renderer {
     decorations.push(this.slideNumber(index + 1, MUTED));
   }
 
-  /** One slide, and the hyperlink targets it turned out to need. */
-  slide(slide: Slide, index: number): { xml: string; links: readonly string[] } {
+  /** One slide, and the relationships it turned out to need. */
+  slide(slide: Slide, index: number): { xml: string; rels: readonly SlideRelationship[] } {
     this.reset();
     const shapes: string[] = [];
     /**
@@ -797,6 +841,32 @@ export class Renderer {
         break;
       }
 
+      case "image": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const entry = this.media.get(slide.asset);
+        if (entry) {
+          shapes.push(this.picture(slide.asset, entry));
+        }
+        shapes.push(
+          this.textShape(
+            "Caption",
+            {
+              x: SIDE_MARGIN,
+              y: IMAGE_CAPTION_BOX.y,
+              width: CONTENT_WIDTH,
+              height: IMAGE_CAPTION_BOX.height,
+            },
+            this.paragraph(slide.caption, {
+              size: centiPoints(DECK.caption),
+              colour: MUTED,
+              indent: 0,
+              align: "center",
+            }),
+          ),
+        );
+        break;
+      }
+
       case "content": {
         if (slide.title) {
           shapes.push(
@@ -839,7 +909,7 @@ export class Renderer {
         '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>' +
         shapes.join("") +
         "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>",
-      links: this.links,
+      rels: this.rels,
     };
   }
 }

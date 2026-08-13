@@ -68,6 +68,10 @@ LLM이 맥락을 읽고 판단한다.
 - 빠른 실험과 확산
 :::
 
+## 플랫폼 구조
+
+![Agent Runtime을 중심으로 한 전체 구조](asset://architecture.png)
+
 ## 구성 요소
 
 ### Control Plane

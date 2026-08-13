@@ -35,8 +35,10 @@ import {
   viewPropsXml,
   type LayoutIndex,
 } from "./package.js";
+import { DocumentError } from "../../errors.js";
+import { extensionOf, imageSize, type ImageMime } from "./image.js";
 import { plan } from "./planner.js";
-import { Renderer } from "./render.js";
+import { Renderer, type MediaEntry } from "./render.js";
 import type { Slide } from "./types.js";
 
 /**
@@ -55,14 +57,23 @@ const LAYOUT_OF: Record<Slide["type"], LayoutIndex> = {
   comparison: 2,
   process: 2,
   timeline: 2,
+  image: 2,
   section: 3,
   closing: 4,
 };
+
+/** One image the caller sent alongside the Markdown, decoded. */
+export interface PptxAsset {
+  mimeType: ImageMime;
+  bytes: Uint8Array;
+}
 
 export interface PptxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
+  /** Keyed by the name `asset://name` references. */
+  assets?: Record<string, PptxAsset>;
 }
 
 export interface RenderedPptx {
@@ -73,9 +84,35 @@ export interface RenderedPptx {
 
 export function renderPptx(document: MarkdownDocument, options: PptxOptions): RenderedPptx {
   const { slides } = plan(document);
-  const renderer = new Renderer();
+
+  /**
+   * One media part per referenced asset, numbered in first-use order. A
+   * reference with no bytes behind it is refused by name here, before any
+   * slide renders: a deck with a silently absent picture reads as "the image
+   * was empty", which is the wrong claim.
+   */
+  const media = new Map<string, MediaEntry>();
+  const assets = options.assets ?? {};
+  for (const slide of slides) {
+    if (slide.type !== "image" || media.has(slide.asset)) {
+      continue;
+    }
+    const asset = assets[slide.asset];
+    if (!asset) {
+      throw new DocumentError(
+        `the document references asset://${slide.asset} but no asset of that name was provided`,
+      );
+    }
+    media.set(slide.asset, {
+      file: `image${media.size + 1}.${extensionOf(asset.mimeType)}`,
+      size: imageSize(asset.bytes, asset.mimeType),
+    });
+  }
+  const extensions = [...new Set([...media.keys()].map((name) => extensionOf(assets[name]!.mimeType)))];
+
+  const renderer = new Renderer(media);
   const parts: Record<string, Uint8Array> = {
-    "[Content_Types].xml": part(contentTypesXml(slides.length)),
+    "[Content_Types].xml": part(contentTypesXml(slides.length, extensions)),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
     "docProps/app.xml": part(appPropertiesXml()),
@@ -96,11 +133,15 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     parts[`ppt/slideLayouts/_rels/slideLayout${layout}.xml.rels`] = part(slideLayoutRelsXml());
   }
 
+  for (const [name, entry] of media) {
+    parts[`ppt/media/${entry.file}`] = assets[name]!.bytes;
+  }
+
   slides.forEach((slide, index) => {
     const rendered = renderer.slide(slide, index);
     parts[`ppt/slides/slide${index + 1}.xml`] = part(rendered.xml);
     parts[`ppt/slides/_rels/slide${index + 1}.xml.rels`] = part(
-      slideRelsXml(LAYOUT_OF[slide.type], rendered.links),
+      slideRelsXml(LAYOUT_OF[slide.type], rendered.rels),
     );
   });
 

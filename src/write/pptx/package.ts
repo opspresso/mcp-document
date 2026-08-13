@@ -34,6 +34,7 @@ import {
 import {
   A,
   HYPERLINK_TYPE,
+  IMAGE_TYPE,
   P,
   R,
   RELATIONSHIPS,
@@ -56,7 +57,13 @@ export const LAYOUT_COUNT = 4;
 
 export type LayoutIndex = 1 | 2 | 3 | 4;
 
-export function contentTypesXml(slides: number): string {
+/** The media types a `<Default>` can carry, keyed by the extension it names. */
+const MEDIA_DEFAULTS: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+};
+
+export function contentTypesXml(slides: number, mediaExtensions: readonly string[] = []): string {
   const override = (path: string, type: string): string =>
     `<Override PartName="${path}" ContentType="${type}"/>`;
   const presentationml = "application/vnd.openxmlformats-officedocument.presentationml";
@@ -64,6 +71,9 @@ export function contentTypesXml(slides: number): string {
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
+    mediaExtensions
+      .map((extension) => `<Default Extension="${extension}" ContentType="${MEDIA_DEFAULTS[extension]}"/>`)
+      .join("") +
     override("/ppt/presentation.xml", `${presentationml}.presentation.main+xml`) +
     override("/ppt/slideMasters/slideMaster1.xml", `${presentationml}.slideMaster+xml`) +
     Array.from({ length: LAYOUT_COUNT }, (_, index) =>
@@ -429,11 +439,16 @@ export function slideMasterRelsXml(): string {
   ]);
 }
 
-export function slideRelsXml(layout: LayoutIndex, links: readonly string[]): string {
+export function slideRelsXml(
+  layout: LayoutIndex,
+  rels: readonly { kind: "hyperlink" | "image"; target: string }[],
+): string {
   return relationships([
     relationship("rId1", SLIDE_LAYOUT_TYPE, `../slideLayouts/slideLayout${layout}.xml`),
-    ...links.map((href, index) =>
-      relationship(`rId${index + 2}`, HYPERLINK_TYPE, href, true),
+    ...rels.map((rel, index) =>
+      rel.kind === "hyperlink"
+        ? relationship(`rId${index + 2}`, HYPERLINK_TYPE, rel.target, true)
+        : relationship(`rId${index + 2}`, IMAGE_TYPE, rel.target),
     ),
   ]);
 }

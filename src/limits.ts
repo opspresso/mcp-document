@@ -80,6 +80,17 @@ export function asUntrustedContent(source: string, text: string, note?: string):
 }
 
 /**
+ * Image assets accepted alongside `render_document`'s Markdown.
+ *
+ * Both bound the same thing from different sides: the count keeps the media
+ * folder honest, and the byte total keeps the rendered deck under
+ * `MAX_RENDERED_BYTES` — an image is stored in the zip roughly as it arrived,
+ * so a deck's size is mostly its pictures.
+ */
+export const MAX_ASSET_COUNT = 12;
+export const MAX_ASSET_TOTAL_BYTES = 6 * 1024 * 1024;
+
+/**
  * How large a rendered document may be in one response.
  *
  * Below the caller's own transport ceiling with room for base64's 4/3 inflation.

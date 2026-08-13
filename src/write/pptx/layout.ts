@@ -98,6 +98,15 @@ export const PROCESS_NODE_TOP = BODY_BOX.y + Math.round((BODY_BOX.height - PROCE
 export const PROCESS_GAP = 457200;
 export const PROCESS_ARROW = { width: 274320, height: 205740 };
 
+/** An image slide: the picture's box, and the caption line under it. */
+export const IMAGE_BOX = {
+  x: SIDE_MARGIN,
+  y: BODY_BOX.y,
+  width: CONTENT_WIDTH,
+  height: BODY_BOX.height - 533400,
+};
+export const IMAGE_CAPTION_BOX = { y: BODY_BOX.y + IMAGE_BOX.height + emu(6), height: 457200 };
+
 /** The timeline: a hairline across the body, dots at the stations. */
 export const TIMELINE_LINE_Y = BODY_BOX.y + 1943100;
 export const TIMELINE_LINE_HEIGHT = emu(2.25);

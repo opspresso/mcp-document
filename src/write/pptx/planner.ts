@@ -280,6 +280,32 @@ function contentSlides(title: Run[] | undefined, blocks: readonly Block[]): Slid
   });
 }
 
+/** The `asset://` scheme, which is how Markdown reaches the bytes the caller sent. */
+const ASSET_SCHEME = "asset://";
+
+/**
+ * A titled section whose one block is one `![alt](asset://…)` image. The
+ * parser turned the image into a link run carrying the alt text, so this is a
+ * paragraph of exactly one asset-scheme link — anything more on the slide
+ * means the image was an illustration inside prose, which stays a link.
+ */
+function asImageSlide(title: Run[] | undefined, blocks: readonly Block[]): Slide | undefined {
+  const [paragraph] = blocks;
+  if (!title || blocks.length !== 1 || paragraph?.kind !== "paragraph") {
+    return undefined;
+  }
+  const [run] = paragraph.runs;
+  if (paragraph.runs.length !== 1 || !run?.href?.startsWith(ASSET_SCHEME)) {
+    return undefined;
+  }
+  return {
+    type: "image",
+    title,
+    asset: run.href.slice(ASSET_SCHEME.length),
+    caption: [{ text: run.text }],
+  };
+}
+
 /** True when this section should close the deck rather than continue it. */
 function closes(section: Section, last: boolean): boolean {
   return (
@@ -330,6 +356,14 @@ export function plan(document: MarkdownDocument): Presentation {
       if (section.blocks.length > 0) {
         slides.push(...contentSlides(section.title, section.blocks));
       }
+      return;
+    }
+
+    // A section that is one image and nothing else is an image slide: the
+    // picture takes the body, and its alt text is the caption.
+    const image = asImageSlide(section.title, section.blocks);
+    if (image) {
+      slides.push(image);
       return;
     }
 

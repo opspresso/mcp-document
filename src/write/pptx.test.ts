@@ -26,6 +26,17 @@ function build(markdown: string): Uint8Array {
   return renderPptx(parseMarkdown(markdown), { title: "test", created: CREATED }).bytes;
 }
 
+/** A 640×400 PNG header — all the size parser ever reads of a real file. */
+function pngFixture(): Uint8Array {
+  const bytes = new Uint8Array(33);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  bytes.set([0x00, 0x00, 0x00, 0x0d], 8);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  new DataView(bytes.buffer).setUint32(16, 640);
+  new DataView(bytes.buffer).setUint32(20, 400);
+  return bytes;
+}
+
 function roundTrip(markdown: string): string {
   return pptxToText(build(markdown)).text;
 }
@@ -430,6 +441,43 @@ test("an overflowing slide breaks before the last sub-heading, which titles the 
   // nothing of it stayed behind on the first slide.
   assert.ok(text.includes("## Slide 2\n아키텍처 — Control Plane\n• 정책 관리"), text);
   assert.equal(text.includes("(계속)"), false, text);
+});
+
+test("an image section embeds the picture and captions it with the alt text", () => {
+  const rendered = renderPptx(
+    parseMarkdown("## 아키텍처 다이어그램\n\n![전체 구조](asset://diagram.png)"),
+    { title: "t", created: CREATED, assets: { "diagram.png": { mimeType: "image/png", bytes: pngFixture() } } },
+  );
+  const slide = partOf(rendered.bytes, "ppt/slides/slide1.xml");
+  assert.ok(slide.includes("<p:pic>"), "the image is a native picture");
+  const embed = /<a:blip r:embed="(rId\d+)"\/>/.exec(slide)?.[1];
+  assert.ok(embed, "the blip names a relationship");
+  const rels = partOf(rendered.bytes, "ppt/slides/_rels/slide1.xml.rels");
+  assert.ok(rels.includes(`Id="${embed}"`) && rels.includes("../media/image1.png"));
+  assert.ok(partOf(rendered.bytes, "[Content_Types].xml").includes('Extension="png"'));
+  assert.ok(readEntries(rendered.bytes, ["ppt/media/image1.png"]).get("ppt/media/image1.png"));
+  assert.ok(pptxToText(rendered.bytes).text.includes("전체 구조"), "the caption survives");
+});
+
+test("a referenced asset that was not provided is refused by name", () => {
+  assert.throws(
+    () =>
+      renderPptx(parseMarkdown("## 그림\n\n![x](asset://missing.png)"), {
+        title: "t",
+        created: CREATED,
+      }),
+    /asset:\/\/missing\.png/,
+  );
+});
+
+test("an image inside prose stays a link, as every image used to be", () => {
+  const rendered = renderPptx(
+    parseMarkdown("## 본문\n\n설명이 있고 ![그림](asset://d.png) 이어진다\n\n다음 문단"),
+    { title: "t", created: CREATED, assets: { "d.png": { mimeType: "image/png", bytes: pngFixture() } } },
+  );
+  const slide = partOf(rendered.bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.includes("<p:pic>"), false, "no picture: the image was an aside");
+  assert.ok(slide.includes("hlinkClick"), "it is still reachable as a link");
 });
 
 test("the divider's ground and the cover's band are layout furniture, not slide shapes", () => {

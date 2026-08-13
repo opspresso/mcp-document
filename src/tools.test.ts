@@ -160,3 +160,42 @@ test("a deck comes back as a deck, and says how many slides it is", async () => 
   // The slide count is what a page count is for a PDF: the unit the format has.
   assert.match(text, /3 slides/);
 });
+
+test("assets ride with pptx only, and an SVG is turned away with the fix named", async () => {
+  const png = {
+    mimeType: "image/png",
+    content: Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0, 0, 0x02, 0x80, 0, 0, 0x01, 0x90, 8, 6, 0, 0, 0,
+    ]).toString("base64"),
+  };
+  const wrongFormat = await call("render_document", {
+    format: "docx",
+    content: "# 보고서",
+    assets: { "a.png": png },
+  });
+  assert.ok(wrongFormat.isError && wrongFormat.text.includes("pptx only"), wrongFormat.text);
+
+  const svg = await call("render_document", {
+    format: "pptx",
+    content: "## 그림\n\n![x](asset://a.svg)",
+    assets: { "a.svg": { mimeType: "image/svg+xml", content: "PHN2Zz48L3N2Zz4=" } },
+  });
+  assert.ok(svg.isError && svg.text.includes("Rasterise"), svg.text);
+
+  const embedded = await call("render_document", {
+    format: "pptx",
+    content: "## 구조도\n\n![전체 구조](asset://a.png)",
+    assets: { "a.png": png },
+  });
+  assert.equal(embedded.isError, false, embedded.text);
+  assert.ok(embedded.file, "the deck came back with the picture inside");
+});
+
+test("a deck that references an asset nobody sent is refused by name", async () => {
+  const result = await call("render_document", {
+    format: "pptx",
+    content: "## 그림\n\n![x](asset://ghost.png)",
+  });
+  assert.ok(result.isError && result.text.includes("asset://ghost.png"), result.text);
+});

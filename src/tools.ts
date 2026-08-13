@@ -13,7 +13,13 @@
  */
 
 import { DocumentError } from "./errors.js";
-import { asUntrustedContent, MAX_MARKDOWN_CHARS, MAX_RENDERED_BYTES } from "./limits.js";
+import {
+  asUntrustedContent,
+  MAX_ASSET_COUNT,
+  MAX_ASSET_TOTAL_BYTES,
+  MAX_MARKDOWN_CHARS,
+  MAX_RENDERED_BYTES,
+} from "./limits.js";
 import { parseMarkdown, withoutDirectives, type Block, type MarkdownDocument } from "./markdown.js";
 import { readDocument } from "./read/document.js";
 import { loadSource } from "./source.js";
@@ -21,7 +27,7 @@ import { safeFilename } from "./filename.js";
 import { renderDocx } from "./write/docx.js";
 import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
-import { renderPptx } from "./write/pptx/index.js";
+import { renderPptx, type PptxAsset } from "./write/pptx/index.js";
 
 /**
  * A text block, or an embedded resource carrying bytes.
@@ -120,6 +126,22 @@ export const TOOLS = [
         filename: {
           type: "string",
           description: "Filename without the extension. Defaults to the title.",
+        },
+        assets: {
+          type: "object",
+          description:
+            "Images to embed, pptx only: each key is a name the Markdown references as " +
+            "`![caption](asset://name)`, each value the image. A slide that is exactly one " +
+            "such image becomes a full-image slide with the caption under it. PNG and JPEG " +
+            "only — rasterise an SVG before sending it.",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              mimeType: { type: "string", enum: ["image/png", "image/jpeg"] },
+              content: { type: "string", description: "The image's bytes, base64-encoded." },
+            },
+            required: ["mimeType", "content"],
+          },
         },
       },
       required: ["format", "content"],
@@ -232,8 +254,9 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
       format,
     );
     const created = new Date();
+    const assets = parseAssets(args.assets, format);
 
-    return await renderTo(format, document, { title, created, filename });
+    return await renderTo(format, document, { title, created, filename, assets });
   } catch (error) {
     console.warn(`render_document failed: ${format} — ${describe(error)}`);
     return failed(
@@ -242,6 +265,75 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
       }`,
     );
   }
+}
+
+/** A name the Markdown can reference and a zip entry can carry. */
+const ASSET_NAME = /^[A-Za-z0-9가-힣][A-Za-z0-9가-힣._-]{0,63}$/;
+
+const ASSET_MIMES = ["image/png", "image/jpeg"] as const;
+
+/**
+ * The `assets` argument, decoded and bounded.
+ *
+ * Everything wrong with it is refused by name — the asset, and what about it —
+ * because "invalid assets" spends the model's next turn guessing. Assets are a
+ * pptx feature; sent with any other format they would be silently dropped
+ * pictures, so that is refused too rather than ignored.
+ */
+function parseAssets(
+  raw: unknown,
+  format: Format,
+): Record<string, PptxAsset> | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new DocumentError("`assets` must be an object of name → { mimeType, content }.");
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0) {
+    return undefined;
+  }
+  if (format !== "pptx") {
+    throw new DocumentError(
+      "`assets` are embedded in pptx only — the other formats render an image as a link.",
+    );
+  }
+  if (entries.length > MAX_ASSET_COUNT) {
+    throw new DocumentError(`${entries.length} assets is over the limit of ${MAX_ASSET_COUNT}.`);
+  }
+  const assets: Record<string, PptxAsset> = {};
+  let total = 0;
+  for (const [name, value] of entries) {
+    if (!ASSET_NAME.test(name)) {
+      throw new DocumentError(
+        `asset name "${name}" is not usable — letters, digits, 한글, dot, dash and underscore only.`,
+      );
+    }
+    const asset = value as { mimeType?: unknown; content?: unknown };
+    const mime = ASSET_MIMES.find((allowed) => allowed === asset?.mimeType);
+    if (!mime) {
+      throw new DocumentError(
+        `asset "${name}" declares ${JSON.stringify(asset?.mimeType)} — only image/png and ` +
+          "image/jpeg can be embedded. Rasterise an SVG before sending it.",
+      );
+    }
+    if (typeof asset.content !== "string" || asset.content === "") {
+      throw new DocumentError(`asset "${name}" carries no base64 content.`);
+    }
+    const bytes = Buffer.from(asset.content, "base64");
+    if (bytes.byteLength === 0) {
+      throw new DocumentError(`asset "${name}" did not decode as base64.`);
+    }
+    total += bytes.byteLength;
+    if (total > MAX_ASSET_TOTAL_BYTES) {
+      throw new DocumentError(
+        `the assets total more than ${MAX_ASSET_TOTAL_BYTES.toLocaleString("en-US")} bytes decoded.`,
+      );
+    }
+    assets[name] = { mimeType: mime, bytes };
+  }
+  return assets;
 }
 
 /**
@@ -256,7 +348,7 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
 async function renderTo(
   format: Format,
   document: MarkdownDocument,
-  meta: { title: string; created: Date; filename: string },
+  meta: { title: string; created: Date; filename: string; assets?: Record<string, PptxAsset> },
 ): Promise<ToolResult> {
   let bytes: Uint8Array;
   let extra = "";
@@ -271,6 +363,7 @@ async function renderTo(
     const rendered = renderPptx(document, {
       title: meta.title,
       created: meta.created.toISOString(),
+      ...(meta.assets ? { assets: meta.assets } : {}),
     });
     bytes = rendered.bytes;
     extra = `, ${rendered.slides} slide${rendered.slides === 1 ? "" : "s"}`;
