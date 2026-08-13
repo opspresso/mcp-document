@@ -221,10 +221,13 @@ exactly right against the one reader that either opens a file or does not.
 
 ### The document engine
 
-`docx` reads the same structure the presentation engine does and answers with
-a *report* rather than a deck — because a page reflows where a slide is a
-fixed box, the machinery differs entirely: no packing, no layout selection,
-just the devices a document earns.
+The three page formats — `docx`, `pdf`, `hwpx` — read the same structure the
+presentation engine does and answer with a *report* rather than a deck:
+because a page reflows where a slide is a fixed box, the machinery differs
+entirely — no packing, no layout selection, just the devices a document earns.
+The cover, the numbered chapters and the contents threshold are one decision
+(`write/semantics.ts`); what follows describes DOCX, and then where the other
+two differ.
 
 **An opening `#` is the cover**: the title oversized on its own page, the
 first paragraph under it as the subtitle, a brand rule above, and no running
@@ -260,6 +263,19 @@ The other directive names unwrap — a page already reads a list as a list.
 the picture centred at its aspect ratio, never upscaled past its pixels, the
 caption under it in the muted caption size. An image inside prose stays a
 link, as it always was.
+
+**The PDF carries the same cover and chapters — and the one contents page
+with real page numbers.** It is the format whose pages this repository lays
+out itself, so the contents page is reserved after the cover, the body is laid
+knowing which page every heading lands on, and the list is drawn last with the
+numbers as facts. The cover is counted but not numbered, as every title page
+is. **HWPX carries them too, conservatively**: the page break is the `hp:p`
+attribute 한글 itself writes, the cover and ordinal are two more entries in
+the `charPr`/`paraPr` tables the body already resolves against, and the
+contents list goes without page numbers, as the DOCX one does. The cover's
+brand rule is the one thing left out — a paragraph border box shortened by
+indent tricks is a shape this format's single reader has to get exactly right,
+and the composition carries without it.
 
 `npm run demo` renders `scripts/demo-doc.md` — a report that uses every
 device — into `build/demo.docx`, and the same report into `build/demo.pdf`

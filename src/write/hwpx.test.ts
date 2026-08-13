@@ -176,3 +176,44 @@ test("the file records what wrote it", () => {
 test("the same input twice produces the same bytes", () => {
   assert.deepEqual(build("# same\n\ntext"), build("# same\n\ntext"));
 });
+
+test("a report gets a cover, a contents list and numbered chapters, each on its page", () => {
+  const bytes = build("# 보고서\n\n부제 한 줄\n\n# 첫 장\n\n본문\n\n# 둘째 장\n\n## 절\n\n내용");
+  const section = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  // The break rides the paragraph attribute 한글 itself writes; one break after
+  // the cover, one after the contents, one before the second chapter.
+  assert.equal(section.match(/pageBreak="1"/g)?.length, 3);
+  const text = roundTrip("# 보고서\n\n부제 한 줄\n\n# 첫 장\n\n본문\n\n# 둘째 장\n\n## 절\n\n내용");
+  assert.ok(text.includes("목차"), text);
+  assert.ok(text.indexOf("목차") < text.indexOf("01"), "contents precede the first chapter");
+  assert.ok(text.includes("01\n첫 장"), text);
+  assert.ok(text.includes("02\n둘째 장"), text);
+});
+
+test("the cover styles resolve against the header, like every other id", () => {
+  const bytes = build("# 표지\n\n부제");
+  const section = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  const header = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/header.xml"]).get("Contents/header.xml")!,
+  );
+  for (const id of section.matchAll(/charPrIDRef="(\d+)"/g)) {
+    assert.ok(header.includes(`<hh:charPr id="${id[1]}"`), `charPr ${id[1]} must be declared`);
+  }
+  for (const id of section.matchAll(/paraPrIDRef="(\d+)"/g)) {
+    assert.ok(header.includes(`<hh:paraPr id="${id[1]}"`), `paraPr ${id[1]} must be declared`);
+  }
+});
+
+test("a memo gets no contents list and no page breaks", () => {
+  const bytes = build("# 메모\n\n한 줄\n\n## 하나\n\n내용");
+  const section = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  // The cover still breaks to the body; nothing else does.
+  assert.equal(section.match(/pageBreak="1"/g)?.length, 1);
+  assert.equal(roundTrip("# 메모\n\n한 줄\n\n## 하나\n\n내용").includes("목차"), false);
+});

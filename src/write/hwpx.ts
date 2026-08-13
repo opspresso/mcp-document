@@ -29,6 +29,7 @@ import { escapeXml } from "../xml.js";
 import { buildZip, stored } from "../zip.js";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { TOC_THRESHOLD, coverOf, tocEntriesOf, type Cover } from "./semantics.js";
 import { DOC, centiPoints, hashed } from "./theme.js";
 import { PRODUCER, SERVER_NAME, SERVER_VERSION } from "../version.js";
 
@@ -72,7 +73,12 @@ const HEADING_CHAR_BASE = 16;
 const QUOTE_CHAR = 22;
 /** White and bold, for the one place a run's own styles cannot say what it needs: a filled header cell. */
 const TABLE_HEADER_CHAR = 23;
-const CHAR_COUNT = TABLE_HEADER_CHAR + 1;
+/** The cover's title and subtitle, a chapter's ordinal, a contents sub-entry. */
+const COVER_TITLE_CHAR = 24;
+const SUBTITLE_CHAR = 25;
+const ORDINAL_CHAR = 26;
+const TOC_MUTED_CHAR = 27;
+const CHAR_COUNT = TOC_MUTED_CHAR + 1;
 
 /** `paraPr` ids: body, six indent levels, code, quote, heading. */
 const PARA_BODY = 0;
@@ -84,7 +90,11 @@ const PARA_HEADING = PARA_QUOTE + 1;
 /** Table cells whose column asked to be centred or set flush right. */
 const PARA_CENTER = PARA_HEADING + 1;
 const PARA_RIGHT = PARA_CENTER + 1;
-const PARA_COUNT = PARA_RIGHT + 1;
+/** The cover title, dropped a third down its page by its top margin. */
+const PARA_COVER = PARA_RIGHT + 1;
+/** A contents sub-entry, indented one step with no hanging. */
+const PARA_TOC2 = PARA_COVER + 1;
+const PARA_COUNT = PARA_TOC2 + 1;
 
 /**
  * Border fills, by id.
@@ -186,25 +196,39 @@ function borderFill(id: number): string {
   );
 }
 
-/** One `charPr`. `id` below 16 is the style bit pattern; above it, a heading or the quote. */
+/** One `charPr`. `id` below 16 is the style bit pattern; above it, a named role. */
 function charProperty(id: number): string {
   const heading = id >= HEADING_CHAR_BASE && id < HEADING_CHAR_BASE + 6;
   const quote = id === QUOTE_CHAR;
   const tableHeader = id === TABLE_HEADER_CHAR;
-  const bold = heading || tableHeader || (id & BOLD) !== 0;
-  const italic = quote || (id & ITALIC) !== 0;
-  const code = !heading && !quote && !tableHeader && (id & CODE) !== 0;
-  const link = !heading && !quote && !tableHeader && (id & LINK) !== 0;
-  const height = heading ? HEADING_SIZES[id - HEADING_CHAR_BASE]! : code ? CODE_SIZE : BODY_SIZE;
+  const named = id >= HEADING_CHAR_BASE;
+  const bold =
+    heading || tableHeader || id === COVER_TITLE_CHAR || id === ORDINAL_CHAR || (!named && (id & BOLD) !== 0);
+  const italic = quote || (!named && (id & ITALIC) !== 0);
+  const code = !named && (id & CODE) !== 0;
+  const link = !named && (id & LINK) !== 0;
+  const height = heading
+    ? HEADING_SIZES[id - HEADING_CHAR_BASE]!
+    : id === COVER_TITLE_CHAR
+      ? centiPoints(DOC.coverTitle)
+      : id === SUBTITLE_CHAR
+        ? centiPoints(DOC.subtitle)
+        : id === ORDINAL_CHAR
+          ? centiPoints(DOC.ordinal)
+          : code
+            ? CODE_SIZE
+            : BODY_SIZE;
   const colour = tableHeader
     ? hashed("onBrand")
     : heading
       ? hashed("brand")
-      : link
-        ? hashed("brandDeep")
-        : quote
-          ? hashed("inkMuted")
-          : hashed("ink");
+      : id === ORDINAL_CHAR
+        ? hashed("brandLight")
+        : link
+          ? hashed("brandDeep")
+          : quote || id === SUBTITLE_CHAR || id === TOC_MUTED_CHAR
+            ? hashed("inkMuted")
+            : hashed("ink");
   const font = code ? 1 : 0;
   const reference = FONT_LANGUAGES.map(
     (language) => `${language.toLowerCase()}="${font}"`,
@@ -231,12 +255,20 @@ function paraProperty(id: number): string {
   const heading = id === PARA_HEADING;
   const code = id === PARA_CODE;
   const quote = id === PARA_QUOTE;
-  const left = quote ? INDENT_STEP : indentLevel !== undefined ? INDENT_STEP * (indentLevel + 1) : 0;
+  const cover = id === PARA_COVER;
+  const left =
+    quote || id === PARA_TOC2
+      ? INDENT_STEP
+      : indentLevel !== undefined
+        ? INDENT_STEP * (indentLevel + 1)
+        : 0;
   // A hanging indent on a list item, so a wrapped line lines up under the text
   // rather than under the marker.
   const intent = indentLevel !== undefined ? -INDENT_STEP : 0;
-  const before = heading ? 600 : 0;
-  const after = code ? 0 : 300;
+  // The cover's top margin is what drops its title a third down the page —
+  // the same composition the DOCX and PDF covers set with their own units.
+  const before = heading ? 600 : cover ? 20000 : 0;
+  const after = code ? 0 : cover ? 800 : id === PARA_TOC2 ? 150 : 300;
   const horizontal =
     id === PARA_CENTER ? "CENTER" : id === PARA_RIGHT ? "RIGHT" : "JUSTIFY";
   return (
@@ -386,6 +418,13 @@ class Renderer {
   private paragraphId = 0;
   /** The section properties ride in the first run written, wherever that is. */
   private sectionEmitted = false;
+  /** The next paragraph opens a fresh page — how a cover or a chapter ends. */
+  private breakNext = false;
+
+  /** Ask for a page break before whatever paragraph comes next. */
+  breakBeforeNext(): void {
+    this.breakNext = true;
+  }
 
   private runs(runs: readonly Run[], forcedCharId?: number): string {
     if (runs.length === 0) {
@@ -416,8 +455,13 @@ class Renderer {
   ): string {
     const id = this.paragraphId;
     this.paragraphId += 1;
+    // `pageBreak` is the paragraph attribute 한글 itself writes for "this
+    // paragraph starts a page" — one flag on an element already in use, which
+    // is the only kind of novelty this format affords.
+    const pageBreak = this.breakNext ? 1 : 0;
+    this.breakNext = false;
     return (
-      `<hp:p id="${id}" paraPrIDRef="${paraId}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+      `<hp:p id="${id}" paraPrIDRef="${paraId}" styleIDRef="0" pageBreak="${pageBreak}" columnBreak="0" merged="0">` +
       inner +
       lineSegments(text, size, width) +
       "</hp:p>"
@@ -545,6 +589,75 @@ class Renderer {
     }
   }
 
+  /**
+   * The cover: the title dropped a third down its page by `PARA_COVER`'s top
+   * margin, the subtitle under it, and a page break for whatever follows. No
+   * brand rule here, unlike the DOCX and PDF covers — a paragraph border box
+   * shortened by indent tricks is a shape this format's one reader has to get
+   * exactly right, and the composition carries without it.
+   */
+  cover(cover: Cover): string {
+    const title = this.paragraph(
+      this.runs(cover.title, COVER_TITLE_CHAR),
+      PARA_COVER,
+      centiPoints(DOC.coverTitle),
+      plainOf(cover.title),
+    );
+    const subtitle = cover.subtitle
+      ? this.paragraph(
+          this.runs(cover.subtitle, SUBTITLE_CHAR),
+          PARA_BODY,
+          centiPoints(DOC.subtitle),
+          plainOf(cover.subtitle),
+        )
+      : "";
+    this.breakBeforeNext();
+    return title + subtitle;
+  }
+
+  /**
+   * The contents: a heading-styled label and one line per entry, numbers
+   * omitted — this renderer does not paginate, so the honest list is the one
+   * without them, exactly as the DOCX contents decided.
+   */
+  toc(label: string, entries: readonly { runs: Run[]; level: number }[]): string {
+    const head = this.paragraph(
+      this.runs([{ text: label }], HEADING_CHAR_BASE),
+      PARA_HEADING,
+      HEADING_SIZES[0]!,
+      label,
+    );
+    const rows = entries
+      .map((entry) =>
+        entry.level === 1
+          ? this.paragraph(this.runs(entry.runs, BOLD), PARA_BODY, BODY_SIZE, plainOf(entry.runs))
+          : this.paragraph(
+              this.runs(entry.runs, TOC_MUTED_CHAR),
+              PARA_TOC2,
+              BODY_SIZE,
+              plainOf(entry.runs),
+              TEXT_WIDTH - INDENT_STEP,
+            ),
+      )
+      .join("");
+    this.breakBeforeNext();
+    return head + rows;
+  }
+
+  /** A chapter's ordinal, opening a fresh page unless nothing is on this one. */
+  chapterOpener(ordinal: number, breakBefore: boolean): string {
+    if (breakBefore) {
+      this.breakBeforeNext();
+    }
+    const label = String(ordinal).padStart(2, "0");
+    return this.paragraph(
+      this.runs([{ text: label }], ORDINAL_CHAR),
+      PARA_BODY,
+      centiPoints(DOC.ordinal),
+      label,
+    );
+  }
+
   /** True once something has carried the section properties. */
   hasSection(): boolean {
     return this.sectionEmitted;
@@ -556,13 +669,30 @@ class Renderer {
   }
 }
 
+const HANGUL = /[ㄱ-힝]/;
+
 function sectionXml(document: MarkdownDocument): string {
   const renderer = new Renderer();
-  const body = document.blocks.map((block) => renderer.block(block)).join("");
+  const { cover, body } = coverOf(document.blocks);
+  const entries = tocEntriesOf(body);
+  let out = cover ? renderer.cover(cover) : "";
+  if (cover && entries.length >= TOC_THRESHOLD) {
+    out += renderer.toc(HANGUL.test(plainOf(cover.title)) ? "목차" : "Contents", entries);
+  }
+  let ordinal = 0;
+  let rendered = cover !== undefined;
+  for (const block of body) {
+    if (block.kind === "heading" && block.level === 1) {
+      ordinal += 1;
+      out += renderer.chapterOpener(ordinal, rendered);
+    }
+    out += renderer.block(block);
+    rendered = true;
+  }
   return (
     `<hs:sec xmlns:hs="${NS.section}" xmlns:hp="${NS.paragraph}" xmlns:hc="${NS.core}" ` +
     `xmlns:hh="${NS.head}">` +
-    (renderer.hasSection() ? body : body + renderer.emptyParagraph()) +
+    (renderer.hasSection() ? out : out + renderer.emptyParagraph()) +
     "</hs:sec>"
   );
 }
