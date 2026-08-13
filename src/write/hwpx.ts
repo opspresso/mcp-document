@@ -389,20 +389,37 @@ const WIDE =
 const LINESEG_SAFETY = 0.92;
 
 /**
+ * The longest text rhwp accepts on a single lineseg, and where to break when
+ * a paragraph has to be split for it rather than for width.
+ *
+ * The rule is read straight from the reader it serves: rhwp (the engine
+ * behind the hop viewer) flags `line_segs.len() == 1 && !text.contains('\n')
+ * && chars > 40` as `LinesegTextRunReflow` — a fixed character count with no
+ * width in it (`document_core/commands/document.rs`, `LONG_TEXT_THRESHOLD`).
+ * A 42-character Latin line that fits one line in every honest metric still
+ * trips it, which is why no amount of width tuning ever cleared the warning.
+ * The break lands at the last space before the limit so both halves read as
+ * lines; rhwp's own layout assumes ~30 Korean characters to a line, so a
+ * split it forced is one its renderer expected anyway.
+ */
+const SINGLE_LINESEG_LIMIT = 40;
+const FORCED_BREAK_AT = 36;
+
+/**
  * The line layout, one `lineseg` per estimated line.
  *
- * **The estimate has to be honest, not pessimistic — 한글 draws what this
- * says.** That was learned the expensive way, in both directions. A wrapped
- * paragraph carrying a single lineseg renders fine (한글 falls back to its own
- * reflow for the degenerate shape) but is flagged by its document checker as
- * non-standard. So one revision assumed the worst metric imaginable — every
- * character a full em — on the theory that spare linesegs would be silently
- * recomputed. They are not: 한글 *trusts* multi-lineseg data, honoured the
- * fabricated break positions, and rendered every long paragraph broken at
- * half width. The count and the breaks below are therefore the closest
- * per-script estimate available, nudged only slightly conservative by
- * `LINESEG_SAFETY`; where an outside checker's arithmetic disagrees with an
- * honest layout estimate, the layout wins.
+ * **The estimate has to be honest, not pessimistic — the readers draw what
+ * this says.** That was learned the expensive way, in both directions. A
+ * wrapped paragraph carrying a single lineseg renders (readers fall back to
+ * their own reflow for the degenerate shape) but is flagged as depending on
+ * it. So one revision assumed the worst metric imaginable — every character a
+ * full em — on the theory that spare linesegs would be silently recomputed.
+ * They are not: multi-lineseg data is *trusted*, the fabricated break
+ * positions were drawn as written, and every long paragraph rendered broken
+ * at half width. The count and the breaks below are therefore the closest
+ * per-script estimate available, nudged slightly conservative by
+ * `LINESEG_SAFETY` — plus the one non-negotiable contract above, imposed by
+ * the reader rather than by geometry.
  */
 function lineSegments(text: string, size: number, width: number): string {
   const lineHeight = Math.round(size * 1.6);
@@ -418,6 +435,12 @@ function lineSegments(text: string, size: number, width: number): string {
       used = 0;
     }
     used += advance;
+  }
+  if (starts.length === 1 && text.length > SINGLE_LINESEG_LIMIT) {
+    // Width said one line; the reader's contract says a paragraph this long
+    // must not claim it. Break at a word boundary near the limit.
+    const space = text.lastIndexOf(" ", FORCED_BREAK_AT);
+    starts.push(space > 4 ? space + 1 : FORCED_BREAK_AT);
   }
   return (
     "<hp:linesegarray>" +

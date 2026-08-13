@@ -244,3 +244,21 @@ test("a cell's linesegs are estimated against its text area, margins taken out",
   const long = cells.find((cell) => cell.includes("길게"))!;
   assert.ok((long.match(/<hp:lineseg /g)?.length ?? 0) >= 2, "the long cell wraps in the count too");
 });
+
+test("no paragraph over forty characters claims a single lineseg — rhwp's contract", () => {
+  // The rule is rhwp's `LinesegTextRunReflow` check, verbatim: one lineseg,
+  // no newline, more than forty characters — width never enters into it. A
+  // 42-character Latin line fits one line in every honest metric and is
+  // flagged anyway, so the writer breaks it at a word boundary instead.
+  const latin = build("tools: await mcp.discover('agent-mcps') and more");
+  const section = new TextDecoder().decode(
+    readEntries(latin, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  for (const paragraph of section.matchAll(/<hp:p [^>]*>((?:(?!<hp:p |<\/hp:p>)[\s\S])*?)<\/hp:p>/g)) {
+    const segs = (paragraph[1]!.match(/<hp:lineseg /g) ?? []).length;
+    const text = [...paragraph[1]!.matchAll(/<hp:t>([^<]*)<\/hp:t>/g)].map((m) => m[1]).join("");
+    if ([...text].length > 40) {
+      assert.ok(segs >= 2, `"${text.slice(0, 30)}…" carries ${segs} lineseg`);
+    }
+  }
+});
