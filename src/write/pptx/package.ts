@@ -10,6 +10,7 @@
  */
 
 import { escapeXml } from "../../xml.js";
+import { HANGUL } from "../semantics.js";
 import { CHART, DECK, PALETTE, centiPoints } from "../theme.js";
 import { PRODUCER } from "../../version.js";
 import {
@@ -283,7 +284,7 @@ function decorText(
 ): string {
   // The same language labelling the slides' runs carry, for the same reason:
   // an unlabelled 한글 footer is set in the reader's locale's CJK face.
-  const lang = /[ㄱ-힝]/.test(text) ? "ko-KR" : "en-US";
+  const lang = HANGUL.test(text) ? "ko-KR" : "en-US";
   return (
     `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
     `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
@@ -318,7 +319,7 @@ function headRule(id: number, x: number, titleY: number, colour: string): string
  * One slide layout, `1` to `LAYOUT_COUNT`.
  *
  * The design of each archetype lives here rather than on its slides: the
- * cover's lavender ground and brand band, the section divider's brand field,
+ * cover's tinted ground and brand band, the section divider's brand field,
  * the content footer that names the deck. `deckTitle` is what that footer says.
  */
 export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
@@ -340,7 +341,7 @@ export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
 
   switch (index) {
     case 1:
-      // The cover: the console's lavender, a brand band down the left edge, a
+      // The cover: the quiet tinted ground, a brand band down the left edge, a
       // rule above where the title lands.
       return wrap("title", "Cover", background(PALETTE.surfaceTint), [
         decorRect(

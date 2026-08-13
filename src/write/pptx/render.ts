@@ -71,6 +71,7 @@ import {
 } from "./layout.js";
 import { A, NUMBER_FIELD_ID, P, R, TABLE_STYLE_ID } from "./ooxml.js";
 import { fitInto, type ImageSize } from "../image.js";
+import { HANGUL } from "../semantics.js";
 import type { Piece, Slide, Style } from "./types.js";
 
 /** What a slide's rels part needs to say about one relationship, in rId order. */
@@ -107,15 +108,10 @@ const CARD_RADIUS = 8000;
 /** A chip is a pill: the radius maxes out at half the height. */
 const CHIP_RADIUS = 50000;
 
-/**
- * Korean, for the run-level `lang` attribute.
- *
- * No face is ever named for prose, so the language is the one signal
- * PowerPoint has for choosing its east-Asian default — a run of 한글 labelled
- * `en-US` is rendered through whatever CJK face the *reader's locale* prefers,
- * which on a Japanese or English machine is not a Korean one.
- */
-const HANGUL = /[ㄱ-힝]/;
+// No face is ever named for prose, so the run's language is the one signal
+// PowerPoint has for choosing its east-Asian default — a run of 한글 labelled
+// `en-US` is rendered through whatever CJK face the *reader's locale* prefers,
+// which on a Japanese or English machine is not a Korean one.
 
 /** `sz` and the rest of `a:rPr`, for one run inside a paragraph of a given style. */
 function runProperties(run: Run, style: Style, linkId?: string): string {

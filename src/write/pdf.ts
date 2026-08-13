@@ -49,7 +49,7 @@ import {
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { plainTextOf } from "../markdown.js";
 import { columnShares } from "./table.js";
-import { TOC_THRESHOLD, coverOf, tocEntriesOf } from "./semantics.js";
+import { HANGUL, TOC_THRESHOLD, coverOf, tocEntriesOf } from "./semantics.js";
 import { DOC, rgbOf, type ColourName } from "./theme.js";
 import { PRODUCER } from "../version.js";
 
@@ -615,7 +615,7 @@ class Writer {
           });
         }
         // A hairline under the top two levels, in the brand colour. It is what
-        // the console's lavender page became on paper: the same signal at a
+        // a full-bleed tint would cost on paper: the same signal at a
         // hundredth of the ink.
         if (block.level <= 2) {
           this.space(3);
@@ -784,7 +784,7 @@ export async function renderPdf(
     writer.block(block);
   }
   if (toc && cover) {
-    writer.fillToc(/[ㄱ-힝]/.test(plainTextOf(cover.title)) ? "목차" : "Contents");
+    writer.fillToc(HANGUL.test(plainTextOf(cover.title)) ? "목차" : "Contents");
   }
   writer.numberPages(cover !== undefined);
   return { bytes: await pdf.save(), pages: writer.pageCount() };

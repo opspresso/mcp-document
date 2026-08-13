@@ -34,6 +34,7 @@ import {
   type ImageSize,
 } from "./image.js";
 import {
+  HANGUL,
   TOC_THRESHOLD,
   coverOf,
   figureOf,
@@ -534,8 +535,6 @@ function comparisonTable(semantic: Extract<Semantic, { kind: "comparison" }>): E
   };
 }
 
-const HANGUL = /[ㄱ-힝]/;
-
 function documentXml(document: MarkdownDocument, renderer: Renderer): string {
   const { cover, body } = coverOf(document.blocks);
   let out = cover ? renderer.cover(cover.title, cover.subtitle) : "";
@@ -622,7 +621,7 @@ function footerXml(): string {
 
 function stylesXml(korean: boolean): string {
   // Levels 1 and 2 carry a hairline under them. It is the whole of what the
-  // console's lavender page became here: a full-bleed tint costs ink on every
+  // a full-bleed tint would cost here: it is ink on every
   // page and survives no photocopier, and a rule in the brand colour says the
   // same thing in a hundredth of the area.
   const underline =
@@ -657,7 +656,7 @@ function stylesXml(korean: boolean): string {
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
     [1, 2, 3, 4, 5, 6].map(heading).join("") +
     // A quote is a callout: the brand bar on the left, the tint behind it —
-    // the console's own way of marking an aside, carried onto the page. The
+    // the quiet way a professional page marks an aside. The
     // shading spans the paragraph's indent box, so the bar and the ground read
     // as one device.
     '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/>' +

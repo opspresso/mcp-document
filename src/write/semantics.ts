@@ -95,6 +95,17 @@ const WHEN = /^(20\d{2}년?|q[1-4]|\d{1,2}월|\d{1,2}분기|\d{1,2}주차?)$/i;
 /** The `asset://` scheme, which is how Markdown reaches the bytes the caller sent. */
 export const ASSET_SCHEME = "asset://";
 
+/**
+ * Korean, and only Korean: syllables plus the compatibility jamo.
+ *
+ * Not a range across the CJK blocks — `[ㄱ-힝]`, the first attempt, spanned
+ * U+3131 to U+D7A1 and therefore matched every kana and han character between
+ * them, which would have labelled a Japanese document `ko-KR`. Shared from
+ * here because four renderers ask the same question and a subtle character
+ * class is exactly the thing that drifts when copied.
+ */
+export const HANGUL = /[가-힣ㄱ-ㅎㅏ-ㅣ]/;
+
 function isSubheading(block: Block): block is Extract<Block, { kind: "heading" }> {
   return block.kind === "heading" && block.level >= 3;
 }

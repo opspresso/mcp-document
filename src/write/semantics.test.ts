@@ -126,3 +126,15 @@ test("a figure is one asset image standing alone, and nothing else", () => {
   const [web] = parseMarkdown("![그림](https://example.com/a.png)").blocks;
   assert.equal(figureOf(web), undefined, "a web image has no bytes to embed");
 });
+
+test("HANGUL matches Korean and only Korean", async () => {
+  const { HANGUL } = await import("./semantics.js");
+  assert.ok(HANGUL.test("보고서"));
+  assert.ok(HANGUL.test("ㅋㅋ"), "compatibility jamo count");
+  assert.ok(HANGUL.test("힣"), "the last syllable is inside the range");
+  // The first attempt, a range from ㄱ to 힝, matched everything between the
+  // blocks — a Japanese or Chinese document would have been labelled Korean.
+  assert.equal(HANGUL.test("日本語のドキュメント"), false);
+  assert.equal(HANGUL.test("中文文档"), false);
+  assert.equal(HANGUL.test("English only"), false);
+});

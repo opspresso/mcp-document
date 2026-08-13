@@ -29,7 +29,7 @@ import { escapeXml } from "../xml.js";
 import { buildZip, stored } from "../zip.js";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
-import { TOC_THRESHOLD, coverOf, tocEntriesOf, type Cover } from "./semantics.js";
+import { HANGUL, TOC_THRESHOLD, coverOf, tocEntriesOf, type Cover } from "./semantics.js";
 import { DOC, centiPoints, hashed } from "./theme.js";
 import { PRODUCER, SERVER_NAME, SERVER_VERSION } from "../version.js";
 
@@ -668,8 +668,6 @@ class Renderer {
     return this.paragraph(this.runs([]), PARA_BODY);
   }
 }
-
-const HANGUL = /[ㄱ-힝]/;
 
 function sectionXml(document: MarkdownDocument): string {
   const renderer = new Renderer();
