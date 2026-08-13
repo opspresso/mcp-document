@@ -384,6 +384,25 @@ test("a comparison renders two chips with the column lines beneath", () => {
   assert.ok(text.includes("• 신규 권장"), text);
 });
 
+test("a process is a row of nodes with arrows between, reading back as the list it was", () => {
+  const bytes = build("## 절차\n\n1. 접수\n2. 검토\n3. 발송");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.match(/prst="roundRect"/g)?.length, 3, "one node per step");
+  assert.equal(slide.match(/prst="rightArrow"/g)?.length, 2, "an arrow in each gap");
+  const text = pptxToText(bytes).text;
+  assert.ok(text.includes("1. 접수"), text);
+  assert.ok(text.includes("3. 발송"), text);
+});
+
+test("a timeline draws stations on a line, the dates above and the work below", () => {
+  const bytes = build("## 로드맵\n\n1. Q1 파일럿\n2. Q2 확대\n3. Q3 전사 배포");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.match(/prst="ellipse"/g)?.length, 3, "a dot per station");
+  const text = pptxToText(bytes).text;
+  assert.ok(text.indexOf("Q1") < text.indexOf("파일럿"), "the date leads its milestone");
+  assert.ok(text.includes("전사 배포"), text);
+});
+
 test("the divider's ground and the cover's band are layout furniture, not slide shapes", () => {
   const bytes = build("# 표지\n\n# 장");
   // The section layout carries the brand field; the divider slide itself only

@@ -53,6 +53,8 @@ const LAYOUT_OF: Record<Slide["type"], LayoutIndex> = {
   metrics: 2,
   quote: 2,
   comparison: 2,
+  process: 2,
+  timeline: 2,
   section: 3,
   closing: 4,
 };

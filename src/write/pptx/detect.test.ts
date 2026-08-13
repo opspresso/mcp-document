@@ -82,6 +82,36 @@ test("a vs-titled pair of sub-headings is a comparison; without vs it is cards",
   assert.notEqual(plain?.type, "comparison");
 });
 
+test("three to five short ordered steps are a process", () => {
+  const slide = detect("## 도입 절차\n\n1. 접수 자동 분류\n2. 초안 자동 생성\n3. 담당자 검토\n4. 자동 발송");
+  assert.equal(slide?.type, "process");
+  assert.ok(slide?.type === "process" && slide.steps.length === 4);
+});
+
+test("a process refuses long steps, few steps, many steps and nesting", () => {
+  assert.equal(detect("## s\n\n1. 하나\n2. 둘"), undefined, "two steps are not a flow");
+  assert.equal(detect("## s\n\n1. a\n2. b\n3. c\n4. d\n5. e\n6. f"), undefined, "six steps");
+  assert.equal(detect("## s\n\n1. a\n  1. a1\n2. b\n3. c"), undefined, "nesting is structure");
+  assert.equal(
+    detect("## s\n\n1. 이 단계는 노드 하나에 들어가기에는 지나치게 긴 문장으로 쓰여 있어 흐름도가 아니라 문단이다\n2. b\n3. c"),
+    undefined,
+    "a long step is prose",
+  );
+});
+
+test("an ordered list whose every step opens with a date is a timeline", () => {
+  const slide = detect("## 로드맵\n\n1. Q1 파일럿 운영\n2. Q2 보안 검토\n3. Q3 전사 배포");
+  assert.equal(slide?.type, "timeline");
+  assert.ok(slide?.type === "timeline" && slide.milestones[0]?.when === "Q1");
+  const korean = detect("## 일정\n\n1. 3월 파일럿\n2. 6월 확대\n3. 9월 전사 적용");
+  assert.equal(korean?.type, "timeline");
+});
+
+test("one undated step turns a timeline back into a process", () => {
+  const slide = detect("## 일정\n\n1. Q1 파일럿\n2. 보안 검토\n3. Q3 배포");
+  assert.equal(slide?.type, "process");
+});
+
 test("a comparison needs exactly two columns with something in each", () => {
   assert.equal(detect("## A vs B\n\n### A\n\n- a"), undefined, "one column");
   assert.equal(detect("## A vs B\n\n### A\n\n- a\n\n### B\n\n- b\n\n### C\n\n- c"), undefined, "three columns");

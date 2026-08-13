@@ -92,6 +92,19 @@ export const COMPARE_GAP = 457200;
 export const CHIP_HEIGHT = 457200;
 export const COMPARE_BODY_TOP = BODY_BOX.y + CHIP_HEIGHT + emu(18);
 
+/** Process nodes: a row of rounded boxes, an arrow in every gap. */
+export const PROCESS_NODE_HEIGHT = 1371600;
+export const PROCESS_NODE_TOP = BODY_BOX.y + Math.round((BODY_BOX.height - PROCESS_NODE_HEIGHT) / 2);
+export const PROCESS_GAP = 457200;
+export const PROCESS_ARROW = { width: 274320, height: 205740 };
+
+/** The timeline: a hairline across the body, dots at the stations. */
+export const TIMELINE_LINE_Y = BODY_BOX.y + 1943100;
+export const TIMELINE_LINE_HEIGHT = emu(2.25);
+export const TIMELINE_DOT = 228600;
+export const TIMELINE_WHEN_BOX = { y: TIMELINE_LINE_Y - 594360, height: 457200 };
+export const TIMELINE_WHAT_BOX = { y: TIMELINE_LINE_Y + 342900, height: 1143000 };
+
 /** Hundredths of a point, which is what `sz` is in. */
 export const TITLE_SIZE = centiPoints(DECK.title);
 export const COVER_TITLE_SIZE = centiPoints(DECK.coverTitle);

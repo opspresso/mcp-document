@@ -64,6 +64,12 @@ export interface CompareColumn {
   lines: CompareLine[];
 }
 
+/** One station on a timeline: when, and what happened there. */
+export interface Milestone {
+  when: string;
+  what: Run[];
+}
+
 /**
  * One slide, typed by what it is for rather than by what is on it.
  *
@@ -86,6 +92,8 @@ export type Slide =
   | { type: "metrics"; title: Run[]; metrics: Metric[] }
   | { type: "quote"; title: Run[]; quote: Run[]; attribution?: Run[] }
   | { type: "comparison"; title: Run[]; columns: [CompareColumn, CompareColumn] }
+  | { type: "process"; title: Run[]; steps: Run[][] }
+  | { type: "timeline"; title: Run[]; milestones: Milestone[] }
   | { type: "closing"; title: Run[]; pieces: Piece[] };
 
 export interface Presentation {

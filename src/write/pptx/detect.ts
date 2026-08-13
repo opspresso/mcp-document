@@ -16,7 +16,7 @@
 
 import type { Block, Run } from "../../markdown.js";
 import { plainTextOf } from "../../markdown.js";
-import type { Card, CompareColumn, Metric, Slide } from "./types.js";
+import type { Card, CompareColumn, Metric, Milestone, Slide } from "./types.js";
 
 /** How much text fits a card before the card is prose. */
 const CARD_BODY_LIMIT = 160;
@@ -30,6 +30,17 @@ const ATTRIBUTION_LIMIT = 80;
 const ATTRIBUTION_LEAD = /^[—–-]/;
 /** Lines one comparison column holds before it is a table's job. */
 const COMPARE_LINE_LIMIT = 6;
+
+/** A process step has to fit in a node; a sentence does not. */
+const STEP_LIMIT = 48;
+/** What a timeline says happened has to fit under its station. */
+const MILESTONE_LIMIT = 40;
+
+/**
+ * A token that names a time: 2026, 2026년, Q3, 8월, 3분기, 2주차. The whole
+ * token must be the date — "2026년의" is prose about a year, not a station.
+ */
+const WHEN = /^(20\d{2}년?|q[1-4]|\d{1,2}월|\d{1,2}분기|\d{1,2}주차?)$/i;
 
 /** A comparison needs the title to say it is one: "A vs B", "도입 비교". */
 const COMPARISON_TITLE = /(^|\s)vs\.?(\s|$)|비교/i;
@@ -124,7 +135,10 @@ export function asQuote(title: readonly Run[], blocks: readonly Block[]): Slide 
   if (attribution === undefined) {
     return { type: "quote", title: [...title], quote: quote.runs };
   }
-  const line = attribution.kind === "paragraph" ? plainTextOf(attribution.runs).trim() : "";
+  if (attribution.kind !== "paragraph") {
+    return undefined;
+  }
+  const line = plainTextOf(attribution.runs).trim();
   if (!ATTRIBUTION_LEAD.test(line) || line.length > ATTRIBUTION_LIMIT) {
     return undefined;
   }
@@ -174,6 +188,63 @@ export function asComparison(title: readonly Run[], blocks: readonly Block[]): S
   return { type: "comparison", title: [...title], columns: [columns[0]!, columns[1]!] };
 }
 
+/** The lone flat ordered list a process or a timeline is made of, or nothing. */
+function orderedItems(blocks: readonly Block[], most: number): Run[][] | undefined {
+  const [list] = blocks;
+  if (blocks.length !== 1 || list?.kind !== "list" || !list.ordered) {
+    return undefined;
+  }
+  if (list.items.length < 3 || list.items.length > most) {
+    return undefined;
+  }
+  if (list.items.some((item) => item.depth !== 0)) {
+    return undefined;
+  }
+  return list.items.map((item) => item.runs);
+}
+
+/**
+ * A timeline: an ordered list whose every step opens with a date — 2026년,
+ * Q3, 8월. All of them, not most: one undated step means the author was
+ * writing a sequence of actions, which is a process.
+ */
+export function asTimeline(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+  const items = orderedItems(blocks, 6);
+  if (!items) {
+    return undefined;
+  }
+  const milestones: Milestone[] = [];
+  for (const runs of items) {
+    const text = plainTextOf(runs).trim();
+    const tokens = text.split(/\s+/);
+    if (tokens.length < 2 || !WHEN.test(tokens[0]!)) {
+      return undefined;
+    }
+    const rest = tokens.slice(1).join(" ");
+    if (rest.length > MILESTONE_LIMIT) {
+      return undefined;
+    }
+    milestones.push({ when: tokens[0]!, what: [{ text: rest }] });
+  }
+  return { type: "timeline", title: [...title], milestones };
+}
+
+/**
+ * A process: three to five short ordered steps, each of which fits in a node.
+ * The numbers the author wrote become the numbers in the nodes, so nothing is
+ * renumbered and nothing is lost if the section falls back to a plain list.
+ */
+export function asProcess(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
+  const items = orderedItems(blocks, 5);
+  if (!items) {
+    return undefined;
+  }
+  if (items.some((runs) => plainTextOf(runs).length > STEP_LIMIT)) {
+    return undefined;
+  }
+  return { type: "process", title: [...title], steps: items.map((runs) => [...runs]) };
+}
+
 /**
  * The first archetype the section's shape matches, or nothing.
  *
@@ -190,6 +261,8 @@ export function specialise(title: readonly Run[] | undefined, blocks: readonly B
     asComparison(title, blocks) ??
     asCards(title, blocks) ??
     asMetrics(title, blocks) ??
+    asTimeline(title, blocks) ??
+    asProcess(title, blocks) ??
     asQuote(title, blocks)
   );
 }

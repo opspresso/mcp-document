@@ -41,6 +41,10 @@ import {
   METRIC_VALUE_BOX,
   NUMBER_BOX,
   ORDINAL_SIZE,
+  PROCESS_ARROW,
+  PROCESS_GAP,
+  PROCESS_NODE_HEIGHT,
+  PROCESS_NODE_TOP,
   QUOTE_BAR_WIDTH,
   QUOTE_BOX,
   QUOTE_INDENT,
@@ -53,6 +57,11 @@ import {
   SLIDE_WIDTH,
   SUBTITLE_BOX,
   SUBTITLE_SIZE,
+  TIMELINE_DOT,
+  TIMELINE_LINE_HEIGHT,
+  TIMELINE_LINE_Y,
+  TIMELINE_WHAT_BOX,
+  TIMELINE_WHEN_BOX,
   TITLE_BOX,
   TITLE_RULE,
   TITLE_SIZE,
@@ -392,15 +401,24 @@ export class Renderer {
     );
   }
 
-  /** A filled bar with nothing to say — the quote's left rule. */
-  private bar(box: { x: number; y: number; width: number; height: number }, colour: string): string {
+  /**
+   * A filled preset shape with nothing to say — a bar, an arrow, a dot.
+   *
+   * These are decoration, so callers put them in `decorations`: written last,
+   * their empty paragraphs land after the content, where extraction drops them.
+   */
+  private decorShape(
+    prst: string,
+    box: { x: number; y: number; width: number; height: number },
+    colour: string,
+  ): string {
     const id = this.nextId;
     this.nextId += 1;
     return (
-      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Bar ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Decor ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
       `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
       `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
-      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>` +
       `<a:solidFill><a:srgbClr val="${colour}"/></a:solidFill>` +
       "</p:spPr>" +
       '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>' +
@@ -626,11 +644,110 @@ export class Renderer {
           );
         }
         decorations.push(
-          this.bar(
+          this.decorShape(
+            "rect",
             { x: SIDE_MARGIN, y: QUOTE_BOX.y, width: QUOTE_BAR_WIDTH, height: QUOTE_BOX.height },
             PALETTE.brandLight,
           ),
         );
+        break;
+      }
+
+      case "process": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const count = slide.steps.length;
+        const width = Math.floor((CONTENT_WIDTH - (count - 1) * PROCESS_GAP) / count);
+        slide.steps.forEach((step, at) => {
+          const x = SIDE_MARGIN + at * (width + PROCESS_GAP);
+          shapes.push(
+            this.roundedShape(
+              `Step ${at + 1}`,
+              { x, y: PROCESS_NODE_TOP, width, height: PROCESS_NODE_HEIGHT },
+              PALETTE.brandTint,
+              CARD_RADIUS,
+              // One paragraph, with the author's number as its marker run: the
+              // node extracts as "1. 접수 자동 분류", exactly the line that
+              // went in.
+              this.paragraph([{ text: `${at + 1}. ` }, ...step], {
+                size: CARD_BODY_SIZE,
+                indent: 0,
+                align: "center",
+                marker: PALETTE.brand,
+              }),
+              { inset: 137160, anchor: "ctr" },
+            ),
+          );
+          if (at < count - 1) {
+            decorations.push(
+              this.decorShape(
+                "rightArrow",
+                {
+                  x: x + width + Math.round((PROCESS_GAP - PROCESS_ARROW.width) / 2),
+                  y: PROCESS_NODE_TOP + Math.round((PROCESS_NODE_HEIGHT - PROCESS_ARROW.height) / 2),
+                  width: PROCESS_ARROW.width,
+                  height: PROCESS_ARROW.height,
+                },
+                PALETTE.brandLight,
+              ),
+            );
+          }
+        });
+        break;
+      }
+
+      case "timeline": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const count = slide.milestones.length;
+        const cell = Math.floor(CONTENT_WIDTH / count);
+        // The line goes into the tree before the dots: later shapes paint over
+        // earlier ones, and a grey hairline across a brand dot is visible.
+        decorations.push(
+          this.decorShape(
+            "rect",
+            { x: SIDE_MARGIN, y: TIMELINE_LINE_Y, width: CONTENT_WIDTH, height: TIMELINE_LINE_HEIGHT },
+            PALETTE.rule,
+          ),
+        );
+        slide.milestones.forEach((milestone, at) => {
+          const x = SIDE_MARGIN + at * cell;
+          shapes.push(
+            this.textShape(
+              `When ${at + 1}`,
+              { x, y: TIMELINE_WHEN_BOX.y, width: cell, height: TIMELINE_WHEN_BOX.height },
+              this.paragraph([{ text: milestone.when }], {
+                size: CARD_TITLE_SIZE,
+                bold: true,
+                colour: PALETTE.brand,
+                indent: 0,
+                align: "center",
+              }),
+            ),
+          );
+          shapes.push(
+            this.textShape(
+              `Milestone ${at + 1}`,
+              { x, y: TIMELINE_WHAT_BOX.y, width: cell, height: TIMELINE_WHAT_BOX.height },
+              this.paragraph(milestone.what, {
+                size: CARD_BODY_SIZE,
+                colour: MUTED,
+                indent: 0,
+                align: "center",
+              }),
+            ),
+          );
+          decorations.push(
+            this.decorShape(
+              "ellipse",
+              {
+                x: x + Math.round(cell / 2) - Math.round(TIMELINE_DOT / 2),
+                y: TIMELINE_LINE_Y + Math.round(TIMELINE_LINE_HEIGHT / 2) - Math.round(TIMELINE_DOT / 2),
+                width: TIMELINE_DOT,
+                height: TIMELINE_DOT,
+              },
+              PALETTE.brand,
+            ),
+          );
+        });
         break;
       }
 
