@@ -217,3 +217,30 @@ test("a memo gets no contents list and no page breaks", () => {
   assert.equal(section.match(/pageBreak="1"/g)?.length, 1);
   assert.equal(roundTrip("# 메모\n\n한 줄\n\n## 하나\n\n내용").includes("목차"), false);
 });
+
+test("a paragraph near the line's edge gets two linesegs, not one and a hope", () => {
+  // 42 full-width characters fit the stated width but not the safety-reduced
+  // one. One lineseg here is the shape 한글's checker calls non-standard: the
+  // paragraph would wrap on screen while the file claims a single line.
+  const nearEdge = "가".repeat(42);
+  const bytes = build(`${nearEdge}`);
+  const section = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  const paragraph = /<hp:p [^>]*>(?:(?!<\/hp:p>)[\s\S])*<\/hp:p>/.exec(section)![0];
+  assert.ok(
+    (paragraph.match(/<hp:lineseg /g)?.length ?? 0) >= 2,
+    "the boundary case must err toward more linesegs",
+  );
+});
+
+test("a cell's linesegs are estimated against its text area, margins taken out", () => {
+  const bytes = build("| a | b |\n|---|---|\n| 짧다 | 이 셀의 문장은 셀 여백을 빼고 나면 한 줄에 들어가지 못할 만큼 길게 이어진다 |");
+  const section = new TextDecoder().decode(
+    readEntries(bytes, ["Contents/section0.xml"]).get("Contents/section0.xml")!,
+  );
+  // The long cell must carry more than one lineseg once margins are honoured.
+  const cells = section.match(/<hp:tc [\s\S]*?<\/hp:tc>/g)!;
+  const long = cells.find((cell) => cell.includes("길게"))!;
+  assert.ok((long.match(/<hp:lineseg /g)?.length ?? 0) >= 2, "the long cell wraps in the count too");
+});

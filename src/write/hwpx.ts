@@ -377,6 +377,19 @@ const WIDE =
   /[ᄀ-ᇿ⺀-〿぀-ヿ㄰-㆏㐀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦]/;
 
 /**
+ * How much of the stated width the estimator lets a line claim.
+ *
+ * The character-width approximation runs a few percent narrow of 함초롬바탕's
+ * real metrics — bold runs, an em dash counted as half, Latin that is not
+ * quite half an em — and a paragraph the estimate put on one line that 한글
+ * wraps onto two is exactly the shape its checker flags as depending on
+ * non-standard reflow. Under-claiming biases the boundary the safe way: a
+ * break a character early is a boundary 한글 quietly moves back, a break that
+ * never came is a warning dialog.
+ */
+const LINESEG_SAFETY = 0.92;
+
+/**
  * The line layout, one `lineseg` per estimated line.
  *
  * 한글 recalculates all of this on open, so the numbers only have to be
@@ -388,13 +401,14 @@ const WIDE =
  */
 function lineSegments(text: string, size: number, width: number): string {
   const lineHeight = Math.round(size * 1.6);
+  const usable = Math.max(size, width * LINESEG_SAFETY);
   // UTF-16 offsets, which is what `textpos` counts.
   const starts: number[] = [0];
   let used = 0;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index]!;
     const advance = character === "\t" ? size * 2 : WIDE.test(character) ? size : size / 2;
-    if (used + advance > width && used > 0) {
+    if (used + advance > usable && used > 0) {
       starts.push(index);
       used = 0;
     }
@@ -485,7 +499,10 @@ class Renderer {
         align === "right" ? PARA_RIGHT : align === "center" ? PARA_CENTER : PARA_BODY,
         BODY_SIZE,
         plainOf(runs),
-        widths[column]!,
+        // The text area, not the cell: the margins written into `cellMargin`
+        // below take 510 a side, and estimating against the full cell width is
+        // how a cell's last word wrapped in 한글 but not in the lineseg count.
+        Math.max(BODY_SIZE, widths[column]! - 1020),
       );
       // Zebra counted from the header, so the first data row is the plain one —
       // a tint straight under a filled header reads as a two-row header.
