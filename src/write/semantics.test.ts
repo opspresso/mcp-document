@@ -132,8 +132,8 @@ test("HANGUL matches Korean and only Korean", async () => {
   assert.ok(HANGUL.test("보고서"));
   assert.ok(HANGUL.test("ㅋㅋ"), "compatibility jamo count");
   assert.ok(HANGUL.test("힣"), "the last syllable is inside the range");
-  // The first attempt, a range from ㄱ to 힝, matched everything between the
-  // blocks — a Japanese or Chinese document would have been labelled Korean.
+  // A single range from jamo to syllables would span the kana and han blocks
+  // between them — Japanese and Chinese must never test as Korean.
   assert.equal(HANGUL.test("日本語のドキュメント"), false);
   assert.equal(HANGUL.test("中文文档"), false);
   assert.equal(HANGUL.test("English only"), false);

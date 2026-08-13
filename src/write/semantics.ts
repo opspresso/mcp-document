@@ -96,13 +96,14 @@ const WHEN = /^(20\d{2}년?|q[1-4]|\d{1,2}월|\d{1,2}분기|\d{1,2}주차?)$/i;
 export const ASSET_SCHEME = "asset://";
 
 /**
- * Korean, and only Korean: syllables plus the compatibility jamo.
+ * Korean, and only Korean: the syllables 가–힣 (U+AC00–U+D7A3, 힣 being the
+ * last of them) plus the compatibility jamo.
  *
- * Not a range across the CJK blocks — `[ㄱ-힝]`, the first attempt, spanned
- * U+3131 to U+D7A1 and therefore matched every kana and han character between
- * them, which would have labelled a Japanese document `ko-KR`. Shared from
- * here because four renderers ask the same question and a subtle character
- * class is exactly the thing that drifts when copied.
+ * Two explicit ranges, never one from jamo to syllables: a single span like
+ * `ㄱ-힣` crosses the kana and han blocks that sit between, and a Japanese or
+ * Chinese document must not test as Korean. Shared from here because four
+ * renderers ask the same question and a subtle character class is exactly the
+ * thing that drifts when copied.
  */
 export const HANGUL = /[가-힣ㄱ-ㅎㅏ-ㅣ]/;
 
