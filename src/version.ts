@@ -14,7 +14,7 @@
  */
 
 export const SERVER_NAME = "mcp-document";
-export const SERVER_VERSION = "0.5.1";
+export const SERVER_VERSION = "0.6.0";
 
 /**
  * How a produced file names what made it.
