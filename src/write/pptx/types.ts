@@ -40,20 +40,52 @@ export type Piece =
   | { kind: "text"; runs: Run[]; style: Style }
   | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] };
 
+/** One card: a sub-heading and at most a line or two under it. */
+export interface Card {
+  title: Run[];
+  body?: Run[];
+}
+
+/** One metric: the number, and what the number is of. */
+export interface Metric {
+  value: string;
+  label: Run[];
+}
+
+/** One line in a comparison column, bulleted when it came from a list. */
+export interface CompareLine {
+  runs: Run[];
+  bullet: boolean;
+}
+
+/** One side of a comparison: its name on the chip, its lines under it. */
+export interface CompareColumn {
+  title: Run[];
+  lines: CompareLine[];
+}
+
 /**
  * One slide, typed by what it is for rather than by what is on it.
  *
- * Four archetypes so far. A `cover` holds a title and at most a subtitle —
- * everything else the author wrote under the opening `#` moves to the slides
- * after it. A `section` is a mid-document `#`: a divider, numbered in the order
- * the dividers appear. A `closing` is the last section when its title says it
- * is one — 감사합니다, Thank you, Q&A — set centred on the cover's ground.
- * Everything else is `content`.
+ * A `cover` holds a title and at most a subtitle — everything else the author
+ * wrote under the opening `#` moves to the slides after it. A `section` is a
+ * mid-document `#`: a divider, numbered in the order the dividers appear. A
+ * `closing` is the last section when its title says it is one — 감사합니다,
+ * Thank you, Q&A — set centred on the cover's ground.
+ *
+ * `cards`, `metrics`, `quote` and `comparison` are *recognised* from the shape
+ * of a section's content by `detect.ts`, conservatively: a section that does
+ * not match a pattern exactly stays `content`, because a layout forced onto
+ * content it does not fit is worse than a plain slide.
  */
 export type Slide =
   | { type: "cover"; title: Run[]; subtitle?: Run[] }
   | { type: "section"; title: Run[]; ordinal: number }
   | { type: "content"; title?: Run[]; pieces: Piece[] }
+  | { type: "cards"; title: Run[]; cards: Card[] }
+  | { type: "metrics"; title: Run[]; metrics: Metric[] }
+  | { type: "quote"; title: Run[]; quote: Run[]; attribution?: Run[] }
+  | { type: "comparison"; title: Run[]; columns: [CompareColumn, CompareColumn] }
   | { type: "closing"; title: Run[]; pieces: Piece[] };
 
 export interface Presentation {

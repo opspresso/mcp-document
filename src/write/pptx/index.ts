@@ -39,10 +39,20 @@ import { plan } from "./planner.js";
 import { Renderer } from "./render.js";
 import type { Slide } from "./types.js";
 
-/** Which layout part carries each archetype's design. */
+/**
+ * Which layout part carries each archetype's design.
+ *
+ * The recognised archetypes — cards, metrics, quote, comparison — share the
+ * content layout: same ground, same footer, same title chrome. Their geometry
+ * is per-slide shape work, not layout furniture.
+ */
 const LAYOUT_OF: Record<Slide["type"], LayoutIndex> = {
   cover: 1,
   content: 2,
+  cards: 2,
+  metrics: 2,
+  quote: 2,
+  comparison: 2,
   section: 3,
   closing: 4,
 };

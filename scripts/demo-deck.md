@@ -22,6 +22,38 @@
 
 # 아키텍처
 
+## 핵심 가치
+
+### Automation
+
+반복 작업을 Agent가 대신한다.
+
+### Integration
+
+MCP로 사내 시스템을 연결한다.
+
+### Intelligence
+
+LLM이 맥락을 읽고 판단한다.
+
+## 주요 성과
+
+- 99.99% Availability
+- 43% Cost Reduction
+- 2.4x Deployment Speed
+
+## IRSA vs Pod Identity
+
+### IRSA
+
+- 표준 방식, 넓은 생태계 지원
+- 어노테이션 기반 설정
+
+### Pod Identity
+
+- 간단한 설정, 신규 권장
+- 클러스터 단위 관리
+
 ## 구성 요소
 
 ### Control Plane
@@ -39,9 +71,13 @@ await agent.run(task);
 
 # 도입 계획
 
-## 도입 효과
+## 현장의 목소리
 
-> 반복 업무가 사라지고, 팀은 판단이 필요한 일에 집중한다.
+> 도입 후 반복 업무가 사라지고, 팀은 판단이 필요한 일에 집중하게 됐다.
+
+— 운영팀 리드
+
+## 도입 절차
 
 1. 접수 자동 분류
 2. 초안 자동 생성

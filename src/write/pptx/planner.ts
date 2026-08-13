@@ -33,6 +33,7 @@
 import type { Block, MarkdownDocument, Run } from "../../markdown.js";
 import { plainTextOf } from "../../markdown.js";
 import { PALETTE } from "../theme.js";
+import { specialise } from "./detect.js";
 import {
   BODY_LINES,
   BODY_SIZE,
@@ -295,6 +296,13 @@ export function plan(document: MarkdownDocument): Presentation {
       return;
     }
 
+    // A section whose shape names an archetype — cards, metrics, a quote, a
+    // comparison — takes it; everything else is packed as content.
+    const special = specialise(section.title, section.blocks);
+    if (special) {
+      slides.push(special);
+      return;
+    }
     slides.push(...contentSlides(section.title, section.blocks));
   });
 

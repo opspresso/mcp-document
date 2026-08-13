@@ -62,6 +62,36 @@ export const HEAD_RULE = { width: emu(48), height: emu(4.5) };
 /** Where the rule sits: this far above the title box it introduces. */
 export const HEAD_RULE_GAP = emu(15);
 
+/* ------------------------------------------------- archetype geometry */
+
+/** The gap between cards, columns and metric cells. */
+export const GRID_GAP = 274320;
+
+/**
+ * Cards sit in one row across the body, vertically centred. The height is
+ * fixed rather than fitted: four equal boxes are what makes a row read as a
+ * set, and a card with less to say holds its size.
+ */
+export const CARD_HEIGHT = 2743200;
+export const CARD_TOP = BODY_BOX.y + Math.round((BODY_BOX.height - CARD_HEIGHT) / 2);
+/** The padding inside a card between its edge and its text. */
+export const CARD_INSET = 228600;
+
+/** A metric's number sits high in the body, its label right under it. */
+export const METRIC_VALUE_BOX = { y: BODY_BOX.y + 1143000, height: 914400 };
+export const METRIC_LABEL_BOX = { y: BODY_BOX.y + 2057400, height: 457200 };
+
+/** The pulled quote: a bar at the margin, the text indented past it. */
+export const QUOTE_BAR_WIDTH = emu(4.5);
+export const QUOTE_INDENT = 457200;
+export const QUOTE_BOX = { y: BODY_BOX.y + 685800, height: 1828800 };
+export const ATTRIBUTION_BOX = { y: QUOTE_BOX.y + QUOTE_BOX.height + emu(12), height: 457200 };
+
+/** Comparison columns: a pill-shaped header chip, the lines hanging under it. */
+export const COMPARE_GAP = 457200;
+export const CHIP_HEIGHT = 457200;
+export const COMPARE_BODY_TOP = BODY_BOX.y + CHIP_HEIGHT + emu(18);
+
 /** Hundredths of a point, which is what `sz` is in. */
 export const TITLE_SIZE = centiPoints(DECK.title);
 export const COVER_TITLE_SIZE = centiPoints(DECK.coverTitle);

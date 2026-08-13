@@ -19,18 +19,31 @@ import type { Run } from "../../markdown.js";
 import { columnShares } from "../table.js";
 import { DECK, PALETTE, centiPoints } from "../theme.js";
 import {
+  ATTRIBUTION_BOX,
   BODY_BOX,
   BODY_SIZE,
+  CARD_HEIGHT,
+  CARD_INSET,
+  CARD_TOP,
+  CHIP_HEIGHT,
   CLOSING_BODY_BOX,
   CLOSING_TITLE_BOX,
   CLOSING_TITLE_SIZE,
+  COMPARE_BODY_TOP,
+  COMPARE_GAP,
   CONTENT_WIDTH,
   COVER_TITLE_BOX,
   COVER_TITLE_SIZE,
+  GRID_GAP,
   INDENT_EMU,
   LINE_HEIGHT,
+  METRIC_LABEL_BOX,
+  METRIC_VALUE_BOX,
   NUMBER_BOX,
   ORDINAL_SIZE,
+  QUOTE_BAR_WIDTH,
+  QUOTE_BOX,
+  QUOTE_INDENT,
   ROW_HEIGHT,
   SECTION_ORDINAL_BOX,
   SECTION_TITLE_BOX,
@@ -58,6 +71,17 @@ const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
 /** How transparent a divider's ordinal is: present, but a mark rather than text. */
 const ORDINAL_ALPHA = 45000;
+
+const CARD_TITLE_SIZE = centiPoints(DECK.cardTitle);
+const CARD_BODY_SIZE = centiPoints(DECK.cardBody);
+const METRIC_SIZE = centiPoints(DECK.metric);
+const METRIC_LABEL_SIZE = centiPoints(DECK.metricLabel);
+const QUOTE_SIZE = centiPoints(DECK.quote);
+
+/** A card's corner radius, as DrawingML's fraction of the shorter side. */
+const CARD_RADIUS = 8000;
+/** A chip is a pill: the radius maxes out at half the height. */
+const CHIP_RADIUS = 50000;
 
 /** `sz` and the rest of `a:rPr`, for one run inside a paragraph of a given style. */
 function runProperties(run: Run, style: Style, linkId?: string): string {
@@ -337,6 +361,53 @@ export class Renderer {
     flushText();
   }
 
+  /**
+   * A rounded rectangle that carries its own text — a card, a chip.
+   *
+   * One native shape, not a rectangle with a text box over it: what the reader
+   * selects in PowerPoint is the card, and dragging it takes the words along.
+   */
+  private roundedShape(
+    name: string,
+    box: { x: number; y: number; width: number; height: number },
+    fill: string,
+    radius: number,
+    paragraphs: string,
+    options?: { inset?: number; anchor?: "t" | "ctr" },
+  ): string {
+    const id = this.nextId;
+    this.nextId += 1;
+    const inset = options?.inset ?? 0;
+    return (
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${escapeXml(name)}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
+      `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
+      `<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val ${radius}"/></a:avLst></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>` +
+      "</p:spPr>" +
+      `<p:txBody><a:bodyPr wrap="square" lIns="${inset}" tIns="${inset}" rIns="${inset}" bIns="${inset}"` +
+      `${options?.anchor === "ctr" ? ' anchor="ctr"' : ""}><a:normAutofit/></a:bodyPr><a:lstStyle/>` +
+      paragraphs +
+      "</p:txBody></p:sp>"
+    );
+  }
+
+  /** A filled bar with nothing to say — the quote's left rule. */
+  private bar(box: { x: number; y: number; width: number; height: number }, colour: string): string {
+    const id = this.nextId;
+    this.nextId += 1;
+    return (
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Bar ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
+      `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      `<a:solidFill><a:srgbClr val="${colour}"/></a:solidFill>` +
+      "</p:spPr>" +
+      '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>' +
+      "</p:sp>"
+    );
+  }
+
   /** The title shape every archetype shares, differing only in box and style. */
   private titleShape(
     title: readonly Run[],
@@ -350,6 +421,18 @@ export class Renderer {
       this.paragraph(title, style),
       '<p:ph type="title"/>',
     );
+  }
+
+  /** What every titled slide on the content layout gets: title, bar, number. */
+  private contentChrome(
+    title: readonly Run[],
+    index: number,
+    shapes: string[],
+    decorations: string[],
+  ): void {
+    shapes.push(this.titleShape(title, index, TITLE_BOX, { size: TITLE_SIZE, bold: true, indent: 0 }));
+    decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
+    decorations.push(this.slideNumber(index + 1, MUTED));
   }
 
   /** One slide, and the hyperlink targets it turned out to need. */
@@ -437,6 +520,163 @@ export class Renderer {
           align: style.align ?? "center",
           indent: 0,
         }));
+        break;
+      }
+
+      case "cards": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const count = slide.cards.length;
+        const width = Math.floor((CONTENT_WIDTH - (count - 1) * GRID_GAP) / count);
+        slide.cards.forEach((card, at) => {
+          const paragraphs =
+            this.paragraph(card.title, {
+              size: CARD_TITLE_SIZE,
+              bold: true,
+              colour: PALETTE.brand,
+              indent: 0,
+            }) +
+            (card.body
+              ? this.paragraph(card.body, {
+                  size: CARD_BODY_SIZE,
+                  colour: MUTED,
+                  indent: 0,
+                  before: 600,
+                })
+              : "");
+          shapes.push(
+            this.roundedShape(
+              `Card ${at + 1}`,
+              { x: SIDE_MARGIN + at * (width + GRID_GAP), y: CARD_TOP, width, height: CARD_HEIGHT },
+              PALETTE.brandTint,
+              CARD_RADIUS,
+              paragraphs,
+              { inset: CARD_INSET },
+            ),
+          );
+        });
+        break;
+      }
+
+      case "metrics": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const count = slide.metrics.length;
+        const width = Math.floor((CONTENT_WIDTH - (count - 1) * GRID_GAP) / count);
+        slide.metrics.forEach((metric, at) => {
+          shapes.push(
+            this.textShape(
+              `Metric ${at + 1}`,
+              {
+                x: SIDE_MARGIN + at * (width + GRID_GAP),
+                y: METRIC_VALUE_BOX.y,
+                width,
+                height: METRIC_VALUE_BOX.height + METRIC_LABEL_BOX.height,
+              },
+              // The number is the point, so the number is the big thing; the
+              // label hangs under it in the muted ink.
+              this.paragraph([{ text: metric.value }], {
+                size: METRIC_SIZE,
+                bold: true,
+                colour: PALETTE.brand,
+                indent: 0,
+                align: "center",
+              }) +
+                this.paragraph(metric.label, {
+                  size: METRIC_LABEL_SIZE,
+                  colour: MUTED,
+                  indent: 0,
+                  align: "center",
+                  before: 600,
+                }),
+            ),
+          );
+        });
+        break;
+      }
+
+      case "quote": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        shapes.push(
+          this.textShape(
+            "Quote",
+            {
+              x: SIDE_MARGIN + QUOTE_INDENT,
+              y: QUOTE_BOX.y,
+              width: CONTENT_WIDTH - QUOTE_INDENT,
+              height: QUOTE_BOX.height,
+            },
+            this.paragraph(slide.quote, { size: QUOTE_SIZE, italic: true, indent: 0 }),
+          ),
+        );
+        if (slide.attribution) {
+          shapes.push(
+            this.textShape(
+              "Attribution",
+              {
+                x: SIDE_MARGIN + QUOTE_INDENT,
+                y: ATTRIBUTION_BOX.y,
+                width: CONTENT_WIDTH - QUOTE_INDENT,
+                height: ATTRIBUTION_BOX.height,
+              },
+              this.paragraph(slide.attribution, {
+                size: METRIC_LABEL_SIZE,
+                colour: MUTED,
+                indent: 0,
+              }),
+            ),
+          );
+        }
+        decorations.push(
+          this.bar(
+            { x: SIDE_MARGIN, y: QUOTE_BOX.y, width: QUOTE_BAR_WIDTH, height: QUOTE_BOX.height },
+            PALETTE.brandLight,
+          ),
+        );
+        break;
+      }
+
+      case "comparison": {
+        this.contentChrome(slide.title, index, shapes, decorations);
+        const width = Math.floor((CONTENT_WIDTH - COMPARE_GAP) / 2);
+        slide.columns.forEach((column, at) => {
+          const x = SIDE_MARGIN + at * (width + COMPARE_GAP);
+          shapes.push(
+            this.roundedShape(
+              `Column ${at + 1}`,
+              { x, y: BODY_BOX.y, width, height: CHIP_HEIGHT },
+              PALETTE.brand,
+              CHIP_RADIUS,
+              this.paragraph(column.title, {
+                size: BODY_SIZE,
+                bold: true,
+                colour: PALETTE.onBrand,
+                indent: 0,
+                align: "center",
+              }),
+              { anchor: "ctr" },
+            ),
+          );
+          shapes.push(
+            this.textShape(
+              `Column ${at + 1} Lines`,
+              {
+                x,
+                y: COMPARE_BODY_TOP,
+                width,
+                height: BODY_BOX.y + BODY_BOX.height - COMPARE_BODY_TOP,
+              },
+              column.lines
+                .map((line) =>
+                  this.paragraph(line.bullet ? [{ text: "• " }, ...line.runs] : line.runs, {
+                    size: BODY_SIZE,
+                    indent: 0,
+                    before: 300,
+                    ...(line.bullet ? { marker: PALETTE.brandLight } : {}),
+                  }),
+                )
+                .join(""),
+            ),
+          );
+        });
         break;
       }
 

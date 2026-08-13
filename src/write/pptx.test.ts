@@ -347,6 +347,43 @@ test("the deck's name sits on the content layout, out of the slides' text", () =
   );
 });
 
+test("a cards section renders one rounded shape per card, carrying its own text", () => {
+  const bytes = build("## 핵심 가치\n\n### Automation\n\n반복 작업 자동화\n\n### Integration\n\nMCP 기반 연결");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.match(/prst="roundRect"/g)?.length, 2, "one roundRect per card");
+  // The card is the shape and the text is inside it: dragging one drags both.
+  assert.match(slide, /roundRect[\s\S]*?Automation/);
+  assert.ok(pptxToText(bytes).text.includes("Automation\n반복 작업 자동화"));
+});
+
+test("a metrics section sets the figure large and the label under it", () => {
+  const bytes = build("## 주요 성과\n\n- 99.99% Availability\n- 43% Cost Reduction");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.ok(slide.includes('sz="4400"'), "the figure takes the metric size");
+  const text = pptxToText(bytes).text;
+  assert.ok(text.includes("99.99%"), text);
+  assert.ok(text.includes("Availability"), text);
+});
+
+test("a lone quote gets the quote treatment and keeps its words", () => {
+  const bytes = build("## 고객의 말\n\n> 반복 업무가 사라졌다.\n\n— 운영팀 리드");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.ok(slide.includes(' i="1"'), "the quote is set in italic");
+  assert.ok(pptxToText(bytes).text.includes("반복 업무가 사라졌다."));
+  assert.ok(pptxToText(bytes).text.includes("— 운영팀 리드"));
+});
+
+test("a comparison renders two chips with the column lines beneath", () => {
+  const bytes = build(
+    "## IRSA vs Pod Identity\n\n### IRSA\n\n- 표준 방식\n\n### Pod Identity\n\n- 신규 권장",
+  );
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.match(/prst="roundRect"/g)?.length, 2, "one chip per column");
+  const text = pptxToText(bytes).text;
+  assert.ok(text.indexOf("IRSA") < text.indexOf("표준 방식"), "chip precedes its lines");
+  assert.ok(text.includes("• 신규 권장"), text);
+});
+
 test("the divider's ground and the cover's band are layout furniture, not slide shapes", () => {
   const bytes = build("# 표지\n\n# 장");
   // The section layout carries the brand field; the divider slide itself only

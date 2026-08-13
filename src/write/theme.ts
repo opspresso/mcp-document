@@ -157,6 +157,14 @@ export const DECK = {
   /** Headings 3 to 6, which stay in a slide's body rather than opening one. */
   subheadings: [22, 20, 18, 18],
   caption: 11,
+  /** A card's heading, and the line or two under it. */
+  cardTitle: 18,
+  cardBody: 14,
+  /** A metric's number — the biggest thing on its slide bar the title. */
+  metric: 44,
+  metricLabel: 13,
+  /** A pulled quote, set alone: bigger than body, smaller than a title. */
+  quote: 24,
 } as const;
 
 /* -------------------------------------------------------------- converters */
