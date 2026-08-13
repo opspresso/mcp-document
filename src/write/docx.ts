@@ -48,10 +48,11 @@ const RELATIONSHIPS = "http://schemas.openxmlformats.org/package/2006/relationsh
 /** One indent level, in twentieths of a point: 0.63cm, Word's own list step. */
 const INDENT_STEP = 360;
 
-/** rId1 is styles, rId2 the footer, rId3 the header; the rest take what is left. */
+/** rId1 styles, rId2 footer, rId3 header, rId4 settings when present; the rest follow. */
 const FOOTER_RELATIONSHIP = "rId2";
 const HEADER_RELATIONSHIP = "rId3";
-const FIRST_LINK_RELATIONSHIP = 4;
+const SETTINGS_RELATIONSHIP = "rId4";
+const FIRST_LINK_RELATIONSHIP = 5;
 
 /** What is left of the page once the margins are taken out — a full-width table. */
 const TABLE_WIDTH = 11906 - 1418 * 2;
@@ -589,6 +590,22 @@ function documentXml(document: MarkdownDocument, renderer: Renderer): string {
   );
 }
 
+/**
+ * `settings.xml`, present only for a document with Korean in it.
+ *
+ * This is the no-name font policy finished, not bent: no face is ever named,
+ * but a document that does not say its east-Asian text is Korean leaves a
+ * non-Korean Word to guess — and Word's guess is its *locale's* CJK default,
+ * which on an English or Japanese machine is a Chinese or Japanese face
+ * rendering 한글 through the wrong font's fallback. `themeFontLang` states the
+ * language; the face is still the reader's system default for it (맑은 고딕 on
+ * Windows, Apple SD Gothic Neo on a Mac). Note what this part does *not*
+ * carry: `updateFields`, which put a dialog in front of every reader once.
+ */
+function settingsXml(): string {
+  return `<w:settings xmlns:w="${W}"><w:themeFontLang w:val="en-US" w:eastAsia="ko-KR"/></w:settings>`;
+}
+
 /** The running head: the document's name, quietly, on every page but the cover. */
 function headerXml(title: string): string {
   const properties =
@@ -621,7 +638,7 @@ function footerXml(): string {
   );
 }
 
-function stylesXml(): string {
+function stylesXml(korean: boolean): string {
   // Levels 1 and 2 carry a hairline under them. It is the whole of what the
   // console's lavender page became here: a full-bleed tint costs ink on every
   // page and survives no photocopier, and a rule in the brand colour says the
@@ -639,7 +656,11 @@ function stylesXml(): string {
   return (
     `<w:styles xmlns:w="${W}">` +
     `<w:docDefaults><w:rPrDefault><w:rPr><w:color w:val="${PALETTE.ink}"/>` +
-    `<w:sz w:val="${halfPoints(DOC.body)}"/></w:rPr></w:rPrDefault>` +
+    `<w:sz w:val="${halfPoints(DOC.body)}"/>` +
+    // Every run states its east-Asian language once, here, when the document
+    // has Korean in it — the run-level half of what `settingsXml` says.
+    (korean ? '<w:lang w:val="en-US" w:eastAsia="ko-KR"/>' : "") +
+    "</w:rPr></w:rPrDefault>" +
     '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
     [1, 2, 3, 4, 5, 6].map(heading).join("") +
@@ -690,7 +711,7 @@ const MEDIA_DEFAULTS: Record<string, string> = {
   jpg: "image/jpeg",
 };
 
-function contentTypesXml(mediaExtensions: readonly string[]): string {
+function contentTypesXml(mediaExtensions: readonly string[], settings: boolean): string {
   return (
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
@@ -698,6 +719,9 @@ function contentTypesXml(mediaExtensions: readonly string[]): string {
     mediaExtensions
       .map((extension) => `<Default Extension="${extension}" ContentType="${MEDIA_DEFAULTS[extension]}"/>`)
       .join("") +
+    (settings
+      ? '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+      : "") +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' +
@@ -718,12 +742,15 @@ function packageRelsXml(): string {
   );
 }
 
-function documentRelsXml(rels: readonly DocRelationship[]): string {
+function documentRelsXml(rels: readonly DocRelationship[], settings: boolean): string {
   return (
     `<Relationships xmlns="${RELATIONSHIPS}">` +
     `<Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/>` +
     `<Relationship Id="${FOOTER_RELATIONSHIP}" Type="${R}/footer" Target="footer1.xml"/>` +
     `<Relationship Id="${HEADER_RELATIONSHIP}" Type="${R}/header" Target="header1.xml"/>` +
+    (settings
+      ? `<Relationship Id="${SETTINGS_RELATIONSHIP}" Type="${R}/settings" Target="settings.xml"/>`
+      : "") +
     rels
       .map((rel, index) =>
         rel.kind === "hyperlink"
@@ -760,17 +787,23 @@ export function renderDocx(document: MarkdownDocument, options: DocxOptions): Ui
   // Before the relationships and media parts: rendering is what discovers
   // the hyperlinks and the pictures.
   const body = documentXml(document, renderer);
+  // The rendered body is the whole of the document's text, so it is what
+  // decides whether the language parts say Korean.
+  const korean = HANGUL.test(body) || HANGUL.test(options.title);
   const parts: Record<string, Uint8Array> = {
-    "[Content_Types].xml": part(contentTypesXml(renderer.mediaExtensions())),
+    "[Content_Types].xml": part(contentTypesXml(renderer.mediaExtensions(), korean)),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
     "docProps/app.xml": part(appPropertiesXml()),
     "word/document.xml": part(body),
-    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships())),
-    "word/styles.xml": part(stylesXml()),
+    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships(), korean)),
+    "word/styles.xml": part(stylesXml(korean)),
     "word/footer1.xml": part(footerXml()),
     "word/header1.xml": part(headerXml(options.title)),
   };
+  if (korean) {
+    parts["word/settings.xml"] = part(settingsXml());
+  }
   for (const [file, bytes] of renderer.mediaParts()) {
     parts[`word/media/${file}`] = bytes;
   }

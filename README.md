@@ -198,6 +198,16 @@ document set in whatever the system falls back to. Colour and layout carry the
 identity instead, and they survive every substitution. The PDF is the exception
 it always was: it embeds Nanum Gothic, because PDF has no system stack behind it.
 
+**The language is stated, so the system default is the *right* one.** Not
+naming a face leaves the choice to the reader's Office — which picks its
+east-Asian default by the run's language, and an unlabelled run falls back to
+the *reader's locale*: 한글 through a Chinese or Japanese face on a non-Korean
+machine. A document with Korean in it carries `themeFontLang eastAsia="ko-KR"`
+and a run-language default in DOCX, and per-run `lang="ko-KR"` in PPTX — on a
+Korean Windows that resolves to 맑은 고딕, on a Mac to Apple SD Gothic Neo,
+and on every machine to *its* Korean face rather than a guess. Still no face
+named anywhere.
+
 Tables are set with **horizontal rules only** — a full grid boxes every number
 in, and the eye reads a table by its rows. The header is filled with the brand
 colour and repeats when a table breaks across pages.

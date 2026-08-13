@@ -281,11 +281,11 @@ test("a report with a cover and enough structure gets a contents page, complete 
   const bytes = build(report);
   const body = partOf(bytes, "word/document.xml");
   // A field without page numbers (`\n`), so the renderer can compute the whole
-  // result itself: nothing is left for Word to fill in, and no settings part
-  // asks it to — asking is what put a dialog in front of every reader.
+  // result itself: nothing is left for Word to fill in, and nothing asks it
+  // to — `updateFields` is what put a dialog in front of every reader.
   assert.ok(body.includes(' TOC \\o "1-2" \\h \\n '), "the TOC is a field, numbers omitted");
   assert.ok(body.includes('<w:fldChar w:fldCharType="separate"/>'), "the result is cached");
-  assert.equal(listEntries(bytes).some((entry) => entry.name === "word/settings.xml"), false);
+  assert.equal(partOf(bytes, "word/settings.xml").includes("updateFields"), false);
   const text = docxToText(bytes).text;
   assert.ok(text.includes("목차\n첫 장\n절\n둘째 장"), text);
 });
@@ -301,4 +301,16 @@ test("a memo gets no contents page", () => {
   assert.equal(partOf(short, "word/document.xml").includes("TOC"), false);
   const coverless = build("## 하나\n\n내용\n\n## 둘\n\n내용\n\n## 셋\n\n내용");
   assert.equal(partOf(coverless, "word/document.xml").includes("TOC"), false);
+});
+
+test("a Korean document states its language; an English one adds no parts for it", () => {
+  const korean = build("# 보고서\n\n한국어 본문");
+  // themeFontLang and the run default are what point a non-Korean Word at its
+  // Korean system face — no font is named, in keeping with the house rule.
+  assert.ok(partOf(korean, "word/settings.xml").includes('<w:themeFontLang w:val="en-US" w:eastAsia="ko-KR"/>'));
+  assert.ok(partOf(korean, "word/styles.xml").includes('<w:lang w:val="en-US" w:eastAsia="ko-KR"/>'));
+  assert.equal(partOf(korean, "word/settings.xml").includes("updateFields"), false, "no dialog");
+  const english = build("# Report\n\nEnglish body");
+  assert.equal(listEntries(english).some((entry) => entry.name === "word/settings.xml"), false);
+  assert.equal(partOf(english, "word/styles.xml").includes("<w:lang"), false);
 });

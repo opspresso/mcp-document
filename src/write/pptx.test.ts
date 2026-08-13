@@ -488,3 +488,12 @@ test("the divider's ground and the cover's band are layout furniture, not slide 
   assert.equal(partOf(bytes, "ppt/slides/slide2.xml").includes("<p:bg>"), false);
   assert.ok(partOf(bytes, "ppt/slideLayouts/slideLayout1.xml").includes('name="Band"'));
 });
+
+test("a run of 한글 is labelled ko-KR, and Latin stays en-US", () => {
+  // The language is the one signal PowerPoint has for picking its east-Asian
+  // default face, since no face is ever named for prose.
+  const slide = partOf(build("## 분기 보고\n\n한국어 본문과 English text"), "ppt/slides/slide1.xml");
+  assert.match(slide, /<a:rPr lang="ko-KR"[^>]*>(?:(?!<\/a:r>).)*분기 보고/s);
+  assert.ok(slide.includes('lang="ko-KR"'), "Korean runs carry their language");
+  assert.ok(slide.includes('lang="en-US"'), "Latin-only runs keep the default");
+});

@@ -281,13 +281,16 @@ function decorText(
   box: { x: number; y: number; width: number; height: number },
   text: string,
 ): string {
+  // The same language labelling the slides' runs carry, for the same reason:
+  // an unlabelled 한글 footer is set in the reader's locale's CJK face.
+  const lang = /[ㄱ-힝]/.test(text) ? "ko-KR" : "en-US";
   return (
     `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
     `<p:spPr><a:xfrm><a:off x="${box.x}" y="${box.y}"/>` +
     `<a:ext cx="${box.width}" cy="${box.height}"/></a:xfrm>` +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
     '<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0"/><a:lstStyle/>' +
-    `<a:p><a:pPr algn="l"/><a:r><a:rPr lang="en-US" sz="${centiPoints(DECK.caption)}" dirty="0">` +
+    `<a:p><a:pPr algn="l"/><a:r><a:rPr lang="${lang}" sz="${centiPoints(DECK.caption)}" dirty="0">` +
     `<a:solidFill><a:srgbClr val="${PALETTE.inkMuted}"/></a:solidFill></a:rPr>` +
     `<a:t>${escapeXml(text)}</a:t></a:r></a:p></p:txBody></p:sp>`
   );

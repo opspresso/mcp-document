@@ -107,17 +107,28 @@ const CARD_RADIUS = 8000;
 /** A chip is a pill: the radius maxes out at half the height. */
 const CHIP_RADIUS = 50000;
 
+/**
+ * Korean, for the run-level `lang` attribute.
+ *
+ * No face is ever named for prose, so the language is the one signal
+ * PowerPoint has for choosing its east-Asian default — a run of 한글 labelled
+ * `en-US` is rendered through whatever CJK face the *reader's locale* prefers,
+ * which on a Japanese or English machine is not a Korean one.
+ */
+const HANGUL = /[ㄱ-힝]/;
+
 /** `sz` and the rest of `a:rPr`, for one run inside a paragraph of a given style. */
 function runProperties(run: Run, style: Style, linkId?: string): string {
   const bold = run.bold || style.bold;
   const italic = run.italic || style.italic;
   const mono = run.code || style.mono;
   const colour = run.href ? LINK_COLOUR : (style.colour ?? INK);
+  const lang = HANGUL.test(run.text) ? "ko-KR" : "en-US";
   const fill = style.alpha
     ? `<a:srgbClr val="${colour}"><a:alpha val="${style.alpha}"/></a:srgbClr>`
     : `<a:srgbClr val="${colour}"/>`;
   return (
-    `<a:rPr lang="en-US" sz="${style.size}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""}` +
+    `<a:rPr lang="${lang}" sz="${style.size}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""}` +
     `${run.href ? ' u="sng"' : ""} dirty="0">` +
     `<a:solidFill>${fill}</a:solidFill>` +
     // Only the Latin face is named, and only for code. Naming a face for prose
