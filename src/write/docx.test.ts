@@ -43,6 +43,7 @@ test("a document has exactly the parts its content types declare", () => {
     "word/_rels/document.xml.rels",
     "word/document.xml",
     "word/footer1.xml",
+    "word/header1.xml",
     "word/styles.xml",
   ]);
   const types = partOf(bytes, "[Content_Types].xml");
@@ -50,6 +51,7 @@ test("a document has exactly the parts its content types declare", () => {
     "/word/document.xml",
     "/word/styles.xml",
     "/word/footer1.xml",
+    "/word/header1.xml",
     "/docProps/core.xml",
     "/docProps/app.xml",
   ]) {
@@ -70,8 +72,12 @@ test("the page number is a field, and the footer it sits in is wired to the sect
   assert.ok(rels.includes(`Id="${id}"`) && rels.includes('Target="footer1.xml"'));
 });
 
-test("headings survive with their level", () => {
-  assert.equal(roundTrip("# 제목\n\n## 부제\n\n본문"), "# 제목\n## 부제\n본문");
+test("headings survive with their level, the cover set apart by its page break", () => {
+  // The opening `#` is now a cover page; the blank line in the extraction is
+  // the page break between the cover and the body, honestly reported.
+  assert.equal(roundTrip("# 제목\n\n## 부제\n\n본문"), "# 제목\n\n## 부제\n본문");
+  // Without a leading `#` there is no cover and nothing changes.
+  assert.equal(roundTrip("## 부제\n\n본문"), "## 부제\n본문");
 });
 
 test("styled text keeps its characters, and the styling is in the markup", () => {
@@ -182,4 +188,56 @@ test("a pptx directive renders as its contents, with no fence in the page", () =
   assert.ok(text.includes("설명"));
   assert.ok(text.includes("뒤 문단"));
   assert.equal(text.includes(":::"), false);
+});
+
+test("the cover borrows Heading1, oversized, and the running head stays out of the text", () => {
+  const bytes = build("# 분기 보고서\n\n요약 한 줄\n\n## 본론\n\n내용");
+  const body = partOf(bytes, "word/document.xml");
+  // The cover title is Heading1 (so it reads back as `#`) with the cover size
+  // inline, and the section marks the first page as the title page.
+  assert.match(body, /Heading1[^<]*"\/>[\s\S]*?<w:sz w:val="60"\/>/);
+  assert.ok(body.includes("<w:titlePg/>"), "the cover carries no running head or number");
+  assert.ok(body.includes('<w:br w:type="page"/>'), "the cover ends with a page break");
+  // `build` renders with the title "test": the header names the document's
+  // title, and the reader — which reads only the body part — never sees it.
+  assert.ok(partOf(bytes, "word/header1.xml").includes(">test<"), "the header names the document");
+  assert.equal(docxToText(bytes).text.includes("test"), false, "the running head stays out");
+});
+
+test("a document with no leading # gets no cover and no title page", () => {
+  const body = partOf(build("본문뿐"), "word/document.xml");
+  assert.equal(body.includes("<w:titlePg/>"), false);
+  assert.equal(body.includes('<w:br w:type="page"/>'), false);
+});
+
+test("a mid-document # opens a numbered chapter on a fresh page", () => {
+  const bytes = build("# 표지\n\n부제\n\n# 첫 장\n\n내용\n\n# 둘째 장");
+  const body = partOf(bytes, "word/document.xml");
+  assert.equal(body.match(/<w:pageBreakBefore\/>/g)?.length, 2, "each chapter starts a page");
+  const text = docxToText(bytes).text;
+  assert.ok(text.includes("01\n# 첫 장"), text);
+  assert.ok(text.includes("02\n# 둘째 장"), text);
+});
+
+test("a quote is a callout: the tint behind it, the bar beside it", () => {
+  const styles = partOf(build("> 인용문"), "word/styles.xml");
+  assert.match(styles, /Quote[\s\S]*?<w:shd w:val="clear" w:color="auto" w:fill="F4F3FE"\/>/);
+});
+
+test(":::metrics becomes a key-figure strip, and only when asked", () => {
+  const asked = build(":::metrics\n- 99.99% 가용성\n- 43% 절감\n:::");
+  const body = partOf(asked, "word/document.xml");
+  assert.match(body, /<w:sz w:val="52"\/>/, "the figure takes the metric size");
+  assert.ok(docxToText(asked).text.includes("99.99%"));
+  // The same list outside a directive is a list: a page transforms nothing unasked.
+  const unasked = partOf(build("## 성과\n\n- 99.99% 가용성\n- 43% 절감"), "word/document.xml");
+  assert.equal(unasked.includes('<w:sz w:val="52"/>'), false);
+});
+
+test(":::comparison becomes a two-column table with the columns as its header", () => {
+  const text = docxToText(
+    build(":::comparison\n### IRSA\n\n- 표준 방식\n\n### Pod Identity\n\n- 신규 권장\n:::"),
+  ).text;
+  assert.ok(text.includes("IRSA | Pod Identity"), text);
+  assert.ok(text.includes("표준 방식 | 신규 권장"), text);
 });

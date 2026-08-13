@@ -139,6 +139,13 @@ export const DOC = {
   headings: [20, 17, 15, 13, 12, 11],
   /** Page numbers, sources, anything set below the body. */
   caption: 8.5,
+  /** The cover's title and its second line, a page read at arm's length. */
+  coverTitle: 30,
+  subtitle: 13,
+  /** A chapter's "01" — a mark at the top of the page, not text. */
+  ordinal: 36,
+  /** A key figure in a metrics strip: the biggest thing on a page of prose. */
+  metric: 26,
 } as const;
 
 export const DECK = {

@@ -25,6 +25,7 @@ import { escapeXml } from "../xml.js";
 import { buildZip } from "../zip.js";
 import type { Align, Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
+import { forceSemantic, type Metric, type Semantic } from "./semantics.js";
 import { DOC, PALETTE, halfPoints } from "./theme.js";
 import { PRODUCER } from "../version.js";
 
@@ -39,12 +40,18 @@ const RELATIONSHIPS = "http://schemas.openxmlformats.org/package/2006/relationsh
 /** One indent level, in twentieths of a point: 0.63cm, Word's own list step. */
 const INDENT_STEP = 360;
 
-/** rId1 is the styles part and rId2 the footer; hyperlinks take what is left. */
+/** rId1 is styles, rId2 the footer, rId3 the header; hyperlinks take what is left. */
 const FOOTER_RELATIONSHIP = "rId2";
-const FIRST_LINK_RELATIONSHIP = 3;
+const HEADER_RELATIONSHIP = "rId3";
+const FIRST_LINK_RELATIONSHIP = 4;
 
 /** What is left of the page once the margins are taken out — a full-width table. */
 const TABLE_WIDTH = 11906 - 1418 * 2;
+
+/** How far down the page the cover's title sits: a third, in twentieths. */
+const COVER_DROP = 4200;
+/** The cover's short brand rule: everything right of this indent is not drawn. */
+const COVER_RULE_INDENT = 8000;
 
 const encoder = new TextEncoder();
 
@@ -75,18 +82,21 @@ function justification(align: Align | undefined): string {
 }
 
 /**
- * `colour` overrides whatever the run's styles would have given it, and exists
- * for the one case a `Run` cannot express: text on a brand-filled table header,
- * which has to be white regardless of what it is. Putting it in the AST would
- * make colour a property of the document rather than of the rendering.
+ * `colour` and `size` override whatever the run's styles would have given
+ * them, and exist for the cases a `Run` cannot express: text on a brand-filled
+ * table header, which has to be white regardless of what it is, or a cover
+ * title set larger than the heading style it borrows. Putting either in the
+ * AST would make presentation a property of the document rather than of the
+ * rendering.
  */
-function runProperties(run: Run, colour?: string): string {
+function runProperties(run: Run, colour?: string, size?: number): string {
   const parts = [
     run.bold ? "<w:b/>" : "",
     run.italic ? "<w:i/>" : "",
     run.code ? '<w:rStyle w:val="CodeChar"/>' : "",
     run.href ? '<w:rStyle w:val="Hyperlink"/>' : "",
     colour ? `<w:color w:val="${colour}"/>` : "",
+    size ? `<w:sz w:val="${size}"/>` : "",
   ].join("");
   return parts ? `<w:rPr>${parts}</w:rPr>` : "";
 }
@@ -113,12 +123,12 @@ class Renderer {
    * `w:hyperlink`. Word treats two adjacent hyperlink elements as two links, so
    * `[**bold** text](url)` would otherwise be two clickable pieces with a seam.
    */
-  private runs(runs: readonly Run[], colour?: string): string {
+  private runs(runs: readonly Run[], colour?: string, size?: number): string {
     let out = "";
     for (let index = 0; index < runs.length; ) {
       const href = runs[index]!.href;
       if (!href) {
-        out += `<w:r>${runProperties(runs[index]!, colour)}${textElement(runs[index]!.text)}</w:r>`;
+        out += `<w:r>${runProperties(runs[index]!, colour, size)}${textElement(runs[index]!.text)}</w:r>`;
         index += 1;
         continue;
       }
@@ -128,7 +138,7 @@ class Renderer {
       }
       const inner = runs
         .slice(index, end)
-        .map((run) => `<w:r>${runProperties(run, colour)}${textElement(run.text)}</w:r>`)
+        .map((run) => `<w:r>${runProperties(run, colour, size)}${textElement(run.text)}</w:r>`)
         .join("");
       out += `<w:hyperlink r:id="${this.relationshipFor(href)}">${inner}</w:hyperlink>`;
       index = end;
@@ -136,8 +146,8 @@ class Renderer {
     return out;
   }
 
-  private paragraph(runs: readonly Run[], properties = "", colour?: string): string {
-    return `<w:p>${properties ? `<w:pPr>${properties}</w:pPr>` : ""}${this.runs(runs, colour)}</w:p>`;
+  private paragraph(runs: readonly Run[], properties = "", colour?: string, size?: number): string {
+    return `<w:p>${properties ? `<w:pPr>${properties}</w:pPr>` : ""}${this.runs(runs, colour, size)}</w:p>`;
   }
 
   private list(block: Extract<Block, { kind: "list" }>): string {
@@ -215,6 +225,49 @@ class Renderer {
     );
   }
 
+  /**
+   * The cover: a short brand rule a third down the page, the title under it in
+   * the cover size, the subtitle in the muted ink, and a page break.
+   *
+   * The title paragraph is `Heading1` with the size and colour overridden
+   * inline — not a style of its own — because the style id is what this
+   * server's own reader maps back to `#`. A cover styled any other way reads
+   * back as a document that lost its title.
+   */
+  cover(title: readonly Run[], subtitle: readonly Run[] | undefined): string {
+    const rule =
+      `<w:p><w:pPr><w:spacing w:before="${COVER_DROP}" w:after="160"/>` +
+      `<w:ind w:right="${COVER_RULE_INDENT}"/>` +
+      `<w:pBdr><w:bottom w:val="single" w:sz="24" w:space="1" w:color="${PALETTE.brand}"/></w:pBdr>` +
+      "</w:pPr></w:p>";
+    const titleParagraph = this.paragraph(
+      title,
+      '<w:pStyle w:val="Heading1"/>' +
+        '<w:pBdr><w:bottom w:val="none" w:sz="0" w:space="0"/></w:pBdr>' +
+        '<w:spacing w:before="0" w:after="240"/>',
+      PALETTE.ink,
+      halfPoints(DOC.coverTitle),
+    );
+    const subtitleParagraph = subtitle
+      ? this.paragraph(subtitle, '<w:spacing w:after="0"/>', PALETTE.inkMuted, halfPoints(DOC.subtitle))
+      : "";
+    return rule + titleParagraph + subtitleParagraph + '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+  }
+
+  /**
+   * What stands at the top of a chapter's page: its number, large and in the
+   * light brand — a mark, not text. The page break rides on this paragraph,
+   * except when nothing has been set yet and a break would make an empty page.
+   */
+  chapterOpener(ordinal: number, breakBefore: boolean): string {
+    return this.paragraph(
+      [{ text: String(ordinal).padStart(2, "0"), bold: true }],
+      `${breakBefore ? "<w:pageBreakBefore/>" : ""}<w:spacing w:before="0" w:after="0"/>`,
+      PALETTE.brandLight,
+      halfPoints(DOC.ordinal),
+    );
+  }
+
   block(block: Block): string {
     switch (block.kind) {
       case "heading":
@@ -238,23 +291,140 @@ class Renderer {
           [],
           `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${PALETTE.rule}"/></w:pBdr>`,
         );
-      case "directive":
-        // A directive is a PPTX planning hint; on a page its contents stand
-        // where it stood.
+      case "directive": {
+        // A named semantic the author asked for gets its page treatment; the
+        // rest unwrap, because a flowing page already reads a list as a list.
+        // Recognition is never automatic here — a document is prose, and prose
+        // transformed unasked is prose misquoted. The deck recognises; the
+        // page waits to be told.
+        const semantic = forceSemantic(block.name, block.blocks);
+        if (semantic?.kind === "metrics") {
+          return this.metricsStrip(semantic.metrics);
+        }
+        if (semantic?.kind === "comparison") {
+          return this.table(comparisonTable(semantic));
+        }
         return block.blocks.map((inner) => this.block(inner)).join("");
+      }
     }
+  }
+
+  /**
+   * A row of key figures: the number large in the brand colour, its name in
+   * the caption size under it. A borderless table, because a row of aligned
+   * cells is exactly what a table is — just not one that looks like a grid.
+   */
+  private metricsStrip(metrics: readonly Metric[]): string {
+    const width = Math.floor(TABLE_WIDTH / metrics.length);
+    const cells = metrics
+      .map(
+        (metric) =>
+          `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/></w:tcPr>` +
+          this.paragraph(
+            [{ text: metric.value, bold: true }],
+            '<w:jc w:val="center"/><w:spacing w:after="40"/>',
+            PALETTE.brand,
+            halfPoints(DOC.metric),
+          ) +
+          this.paragraph(
+            metric.label,
+            '<w:jc w:val="center"/>',
+            PALETTE.inkMuted,
+            halfPoints(DOC.caption),
+          ) +
+          "</w:tc>",
+      )
+      .join("");
+    const grid = metrics.map(() => `<w:gridCol w:w="${width}"/>`).join("");
+    return (
+      `<w:tbl><w:tblPr><w:tblW w:w="${TABLE_WIDTH}" w:type="dxa"/><w:tblLayout w:type="fixed"/>` +
+      "<w:tblBorders>" +
+      ["top", "bottom", "left", "right", "insideH", "insideV"]
+        .map((edge) => `<w:${edge} w:val="none" w:sz="0" w:space="0"/>`)
+        .join("") +
+      `</w:tblBorders></w:tblPr><w:tblGrid>${grid}</w:tblGrid>` +
+      `<w:tr>${cells}</w:tr></w:tbl><w:p/>`
+    );
   }
 }
 
+/**
+ * A comparison, said as a table — which is what a page does well. The chip
+ * headers a slide draws become the header row, and the columns' lines zip
+ * into rows; the table renderer supplies the brand header and the rules.
+ */
+function comparisonTable(semantic: Extract<Semantic, { kind: "comparison" }>): Extract<Block, { kind: "table" }> {
+  const [left, right] = semantic.columns;
+  const depth = Math.max(left.lines.length, right.lines.length);
+  return {
+    kind: "table",
+    header: [left.title, right.title],
+    rows: Array.from({ length: depth }, (_, at) => [
+      left.lines[at]?.runs ?? [],
+      right.lines[at]?.runs ?? [],
+    ]),
+    align: ["left", "left"],
+  };
+}
+
+/**
+ * The opening `#` and its first paragraph, when the document leads with them.
+ *
+ * The same reading the deck's planner makes: the first `#` is the cover's
+ * title, the paragraph right under it the subtitle, and both leave the body.
+ * A `#` anywhere later is a chapter, which `documentXml` numbers in order.
+ */
+function splitCover(blocks: readonly Block[]): {
+  cover?: { title: Run[]; subtitle?: Run[] };
+  body: readonly Block[];
+} {
+  const [first, second] = blocks;
+  if (first?.kind !== "heading" || first.level !== 1) {
+    return { body: blocks };
+  }
+  if (second?.kind === "paragraph") {
+    return { cover: { title: first.runs, subtitle: second.runs }, body: blocks.slice(2) };
+  }
+  return { cover: { title: first.runs }, body: blocks.slice(1) };
+}
+
 function documentXml(document: MarkdownDocument, renderer: Renderer): string {
-  const body = document.blocks.map((block) => renderer.block(block)).join("");
+  const { cover, body } = splitCover(document.blocks);
+  let out = cover ? renderer.cover(cover.title, cover.subtitle) : "";
+  /** Whether a page break before the next chapter has anything to move past. */
+  let rendered = cover !== undefined;
+  let ordinal = 0;
+  for (const block of body) {
+    if (block.kind === "heading" && block.level === 1) {
+      ordinal += 1;
+      out += renderer.chapterOpener(ordinal, rendered);
+    }
+    out += renderer.block(block);
+    rendered = true;
+  }
   return (
     `<w:document xmlns:w="${W}" xmlns:r="${R}">` +
-    // The footer reference comes before the page size: `w:sectPr` puts its
-    // header and footer references first, and Word rejects the other order.
-    `<w:body>${body}<w:sectPr>` +
+    // The header and footer references come before the page size: `w:sectPr`
+    // puts its references first, and Word rejects the other order. `titlePg`
+    // comes after the margins for the same schema reason, and is what keeps
+    // the cover free of the running head and the page number.
+    `<w:body>${out}<w:sectPr>` +
+    `<w:headerReference w:type="default" r:id="${HEADER_RELATIONSHIP}"/>` +
     `<w:footerReference w:type="default" r:id="${FOOTER_RELATIONSHIP}"/>${PAGE}` +
+    (cover ? "<w:titlePg/>" : "") +
     "</w:sectPr></w:body></w:document>"
+  );
+}
+
+/** The running head: the document's name, quietly, on every page but the cover. */
+function headerXml(title: string): string {
+  const properties =
+    `<w:rPr><w:color w:val="${PALETTE.inkMuted}"/><w:sz w:val="${halfPoints(DOC.caption)}"/></w:rPr>`;
+  return (
+    `<w:hdr xmlns:w="${W}" xmlns:r="${R}"><w:p>` +
+    '<w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr>' +
+    `<w:r>${properties}<w:t xml:space="preserve">${escapeXml(title)}</w:t></w:r>` +
+    "</w:p></w:hdr>"
   );
 }
 
@@ -300,10 +470,13 @@ function stylesXml(): string {
     '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
     [1, 2, 3, 4, 5, 6].map(heading).join("") +
-    // A quote is set off by a brand bar rather than by indentation alone, which
-    // is the console's own way of marking an aside.
+    // A quote is a callout: the brand bar on the left, the tint behind it —
+    // the console's own way of marking an aside, carried onto the page. The
+    // shading spans the paragraph's indent box, so the bar and the ground read
+    // as one device.
     '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/>' +
-    '<w:pPr><w:ind w:left="720"/>' +
+    '<w:pPr><w:ind w:left="720" w:right="360"/><w:spacing w:before="120" w:after="160"/>' +
+    `<w:shd w:val="clear" w:color="auto" w:fill="${PALETTE.brandTint}"/>` +
     `<w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="${PALETTE.brandLight}"/></w:pBdr></w:pPr>` +
     `<w:rPr><w:i/><w:color w:val="${PALETTE.inkMuted}"/></w:rPr></w:style>` +
     '<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/>' +
@@ -346,6 +519,7 @@ function contentTypesXml(): string {
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' +
+    '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>' +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
     '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>' +
     "</Types>"
@@ -367,6 +541,7 @@ function documentRelsXml(links: readonly string[]): string {
     `<Relationships xmlns="${RELATIONSHIPS}">` +
     `<Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/>` +
     `<Relationship Id="${FOOTER_RELATIONSHIP}" Type="${R}/footer" Target="footer1.xml"/>` +
+    `<Relationship Id="${HEADER_RELATIONSHIP}" Type="${R}/header" Target="header1.xml"/>` +
     links
       .map(
         (href, index) =>
@@ -408,5 +583,6 @@ export function renderDocx(document: MarkdownDocument, options: DocxOptions): Ui
     "word/_rels/document.xml.rels": part(documentRelsXml(renderer.linkTargets())),
     "word/styles.xml": part(stylesXml()),
     "word/footer1.xml": part(footerXml()),
+    "word/header1.xml": part(headerXml(options.title)),
   });
 }
