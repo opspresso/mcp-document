@@ -655,7 +655,17 @@ function stylesXml(korean: boolean): string {
     `<w:sz w:val="${halfPoints(DOC.headings[level - 1] ?? DOC.body)}"/></w:rPr></w:style>`;
   return (
     `<w:styles xmlns:w="${W}">` +
-    `<w:docDefaults><w:rPrDefault><w:rPr><w:color w:val="${PALETTE.ink}"/>` +
+    "<w:docDefaults><w:rPrDefault><w:rPr>" +
+    // A Korean document sets its Latin through the east-Asian theme slot too —
+    // still no face named, but the *same* system face for both scripts. Left
+    // alone, Word splits a Korean sentence across two fonts: 한글 in the EA
+    // default and the Latin words beside it in Calibri, which is the mixed
+    // look every Korean house style exists to prevent. Code keeps Consolas:
+    // the Code styles carry their own rFonts, which beat this default.
+    (korean
+      ? '<w:rFonts w:asciiTheme="minorEastAsia" w:hAnsiTheme="minorEastAsia" w:eastAsiaTheme="minorEastAsia"/>'
+      : "") +
+    `<w:color w:val="${PALETTE.ink}"/>` +
     `<w:sz w:val="${halfPoints(DOC.body)}"/>` +
     // Every run states its east-Asian language once, here, when the document
     // has Korean in it — the run-level half of what `settingsXml` says.

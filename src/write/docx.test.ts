@@ -314,3 +314,13 @@ test("a Korean document states its language; an English one adds no parts for it
   assert.equal(listEntries(english).some((entry) => entry.name === "word/settings.xml"), false);
   assert.equal(partOf(english, "word/styles.xml").includes("<w:lang"), false);
 });
+
+test("in a Korean document the Latin follows the east-Asian face, still unnamed", () => {
+  // Word otherwise splits a Korean sentence across two fonts — 한글 in the EA
+  // default, "MCP" beside it in Calibri. The theme slot unifies them without
+  // naming a face; an English document keeps Word's own split defaults.
+  const korean = partOf(build("# 보고서\n\nMCP 기반 자동화"), "word/styles.xml");
+  assert.ok(korean.includes('w:asciiTheme="minorEastAsia"'));
+  const english = partOf(build("# Report\n\nplain body"), "word/styles.xml");
+  assert.equal(english.includes("w:asciiTheme"), false);
+});
