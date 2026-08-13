@@ -36,7 +36,7 @@ import {
   type LayoutIndex,
 } from "./package.js";
 import { DocumentError } from "../../errors.js";
-import { extensionOf, imageSize, type ImageMime } from "../image.js";
+import { extensionOf, imageSize, type ImageAsset } from "../image.js";
 import { plan } from "./planner.js";
 import { Renderer, type MediaEntry } from "./render.js";
 import type { Slide } from "./types.js";
@@ -62,18 +62,12 @@ const LAYOUT_OF: Record<Slide["type"], LayoutIndex> = {
   closing: 4,
 };
 
-/** One image the caller sent alongside the Markdown, decoded. */
-export interface PptxAsset {
-  mimeType: ImageMime;
-  bytes: Uint8Array;
-}
-
 export interface PptxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
   /** Keyed by the name `asset://name` references. */
-  assets?: Record<string, PptxAsset>;
+  assets?: Record<string, ImageAsset>;
 }
 
 export interface RenderedPptx {

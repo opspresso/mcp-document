@@ -23,9 +23,17 @@
 
 import { escapeXml } from "../xml.js";
 import { buildZip } from "../zip.js";
+import { DocumentError } from "../errors.js";
 import type { Align, Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
-import { forceSemantic, type Metric, type Semantic } from "./semantics.js";
+import {
+  extensionOf,
+  fitInto,
+  imageSize,
+  type ImageAsset,
+  type ImageSize,
+} from "./image.js";
+import { figureOf, forceSemantic, type Figure, type Metric, type Semantic } from "./semantics.js";
 import { DOC, PALETTE, halfPoints } from "./theme.js";
 import { PRODUCER } from "../version.js";
 
@@ -52,6 +60,20 @@ const TABLE_WIDTH = 11906 - 1418 * 2;
 const COVER_DROP = 4200;
 /** The cover's short brand rule: everything right of this indent is not drawn. */
 const COVER_RULE_INDENT = 8000;
+
+/** 635 EMU to the twentieth of a point, which is how a picture meets the page. */
+const EMU_PER_TWIP = 635;
+
+/**
+ * The box a figure may fill: the text width, and three quarters of a page tall
+ * — a picture that needs more than that is a page of its own, which is a
+ * layout this renderer does not decide.
+ */
+const FIGURE_BOX = { x: 0, y: 0, width: TABLE_WIDTH * EMU_PER_TWIP, height: 6_858_000 };
+
+const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 
 const encoder = new TextEncoder();
 
@@ -101,21 +123,47 @@ function runProperties(run: Run, colour?: string, size?: number): string {
   return parts ? `<w:rPr>${parts}</w:rPr>` : "";
 }
 
-class Renderer {
-  /** Hyperlink targets, in the order they were first seen; the index is the id. */
-  private readonly links: string[] = [];
+/** What the document's rels part needs to say about one relationship, in rId order. */
+export interface DocRelationship {
+  kind: "hyperlink" | "image";
+  target: string;
+}
 
-  private relationshipFor(href: string): string {
-    let index = this.links.indexOf(href);
+class Renderer {
+  /** Relationships in the order first seen; the index is the id. */
+  private readonly rels: DocRelationship[] = [];
+  /** Where each named asset's media part lives, in first-use order. */
+  private readonly media = new Map<string, { file: string; size: ImageSize }>();
+  /** `wp:docPr` ids, which Word wants unique across the document. */
+  private nextDrawingId = 1;
+
+  constructor(private readonly assets: Record<string, ImageAsset> = {}) {}
+
+  private relationshipFor(kind: DocRelationship["kind"], target: string): string {
+    let index = this.rels.findIndex((rel) => rel.kind === kind && rel.target === target);
     if (index === -1) {
-      index = this.links.push(href) - 1;
+      index = this.rels.push({ kind, target }) - 1;
     }
-    // rId1 is styles.xml and rId2 the footer, so links start above both.
+    // rId1 is styles.xml, rId2 the footer and rId3 the header; the rest start above.
     return `rId${index + FIRST_LINK_RELATIONSHIP}`;
   }
 
-  linkTargets(): readonly string[] {
-    return this.links;
+  relationships(): readonly DocRelationship[] {
+    return this.rels;
+  }
+
+  /** The media parts the document turned out to need, keyed by file name. */
+  mediaParts(): ReadonlyMap<string, Uint8Array> {
+    const parts = new Map<string, Uint8Array>();
+    for (const [name, entry] of this.media) {
+      parts.set(entry.file, this.assets[name]!.bytes);
+    }
+    return parts;
+  }
+
+  /** The extensions the content types must declare, in first-use order. */
+  mediaExtensions(): readonly string[] {
+    return [...new Set([...this.media.keys()].map((name) => extensionOf(this.assets[name]!.mimeType)))];
   }
 
   /**
@@ -140,7 +188,7 @@ class Renderer {
         .slice(index, end)
         .map((run) => `<w:r>${runProperties(run, colour, size)}${textElement(run.text)}</w:r>`)
         .join("");
-      out += `<w:hyperlink r:id="${this.relationshipFor(href)}">${inner}</w:hyperlink>`;
+      out += `<w:hyperlink r:id="${this.relationshipFor("hyperlink", href)}">${inner}</w:hyperlink>`;
       index = end;
     }
     return out;
@@ -268,12 +316,64 @@ class Renderer {
     );
   }
 
+  /**
+   * A figure: the picture centred at its aspect ratio, the caption under it.
+   *
+   * The bytes were sent by name alongside the Markdown; a reference with none
+   * behind it is refused here by name, because a report with a silently absent
+   * picture reads as "the image was empty", which is the wrong claim.
+   */
+  private figure(figure: Figure): string {
+    const asset = this.assets[figure.asset];
+    if (!asset) {
+      throw new DocumentError(
+        `the document references asset://${figure.asset} but no asset of that name was provided`,
+      );
+    }
+    let entry = this.media.get(figure.asset);
+    if (!entry) {
+      entry = {
+        file: `image${this.media.size + 1}.${extensionOf(asset.mimeType)}`,
+        size: imageSize(asset.bytes, asset.mimeType),
+      };
+      this.media.set(figure.asset, entry);
+    }
+    const relationship = this.relationshipFor("image", `media/${entry.file}`);
+    const placed = fitInto(entry.size, FIGURE_BOX);
+    const id = this.nextDrawingId;
+    this.nextDrawingId += 1;
+    const drawing =
+      '<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">' +
+      `<wp:extent cx="${placed.width}" cy="${placed.height}"/>` +
+      `<wp:docPr id="${id}" name="${escapeXml(figure.asset)}"/>` +
+      `<a:graphic><a:graphicData uri="${PIC}">` +
+      `<pic:pic><pic:nvPicPr><pic:cNvPr id="${id}" name="${escapeXml(figure.asset)}"/>` +
+      "<pic:cNvPicPr/></pic:nvPicPr>" +
+      `<pic:blipFill><a:blip r:embed="${relationship}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+      `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${placed.width}" cy="${placed.height}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+      "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>";
+    return (
+      `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="80"/></w:pPr><w:r>${drawing}</w:r></w:p>` +
+      this.paragraph(
+        figure.caption,
+        '<w:jc w:val="center"/><w:spacing w:after="240"/>',
+        PALETTE.inkMuted,
+        halfPoints(DOC.caption),
+      )
+    );
+  }
+
   block(block: Block): string {
     switch (block.kind) {
       case "heading":
         return this.paragraph(block.runs, `<w:pStyle w:val="Heading${block.level}"/>`);
-      case "paragraph":
-        return this.paragraph(block.runs);
+      case "paragraph": {
+        // A paragraph that is exactly one asset image is a figure; an image
+        // inside prose stays the link it has always been.
+        const figure = figureOf(block);
+        return figure ? this.figure(figure) : this.paragraph(block.runs);
+      }
       case "list":
         return this.list(block);
       case "code":
@@ -403,7 +503,7 @@ function documentXml(document: MarkdownDocument, renderer: Renderer): string {
     rendered = true;
   }
   return (
-    `<w:document xmlns:w="${W}" xmlns:r="${R}">` +
+    `<w:document xmlns:w="${W}" xmlns:r="${R}" xmlns:wp="${WP}" xmlns:a="${A}" xmlns:pic="${PIC}">` +
     // The header and footer references come before the page size: `w:sectPr`
     // puts its references first, and Word rejects the other order. `titlePg`
     // comes after the margins for the same schema reason, and is what keeps
@@ -511,11 +611,20 @@ function appPropertiesXml(): string {
   );
 }
 
-function contentTypesXml(): string {
+/** The media types a `<Default>` can carry, keyed by the extension it names. */
+const MEDIA_DEFAULTS: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+};
+
+function contentTypesXml(mediaExtensions: readonly string[]): string {
   return (
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
+    mediaExtensions
+      .map((extension) => `<Default Extension="${extension}" ContentType="${MEDIA_DEFAULTS[extension]}"/>`)
+      .join("") +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' +
@@ -536,16 +645,17 @@ function packageRelsXml(): string {
   );
 }
 
-function documentRelsXml(links: readonly string[]): string {
+function documentRelsXml(rels: readonly DocRelationship[]): string {
   return (
     `<Relationships xmlns="${RELATIONSHIPS}">` +
     `<Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/>` +
     `<Relationship Id="${FOOTER_RELATIONSHIP}" Type="${R}/footer" Target="footer1.xml"/>` +
     `<Relationship Id="${HEADER_RELATIONSHIP}" Type="${R}/header" Target="header1.xml"/>` +
-    links
-      .map(
-        (href, index) =>
-          `<Relationship Id="rId${index + FIRST_LINK_RELATIONSHIP}" Type="${R}/hyperlink" Target="${escapeXml(href)}" TargetMode="External"/>`,
+    rels
+      .map((rel, index) =>
+        rel.kind === "hyperlink"
+          ? `<Relationship Id="rId${index + FIRST_LINK_RELATIONSHIP}" Type="${R}/hyperlink" Target="${escapeXml(rel.target)}" TargetMode="External"/>`
+          : `<Relationship Id="rId${index + FIRST_LINK_RELATIONSHIP}" Type="${R}/image" Target="${escapeXml(rel.target)}"/>`,
       )
       .join("") +
     "</Relationships>"
@@ -568,21 +678,28 @@ export interface DocxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
+  /** Keyed by the name `asset://name` references. */
+  assets?: Record<string, ImageAsset>;
 }
 
 export function renderDocx(document: MarkdownDocument, options: DocxOptions): Uint8Array {
-  const renderer = new Renderer();
-  // Before the relationships part: rendering is what discovers the hyperlinks.
+  const renderer = new Renderer(options.assets);
+  // Before the relationships and media parts: rendering is what discovers
+  // the hyperlinks and the pictures.
   const body = documentXml(document, renderer);
-  return buildZip({
-    "[Content_Types].xml": part(contentTypesXml()),
+  const parts: Record<string, Uint8Array> = {
+    "[Content_Types].xml": part(contentTypesXml(renderer.mediaExtensions())),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
     "docProps/app.xml": part(appPropertiesXml()),
     "word/document.xml": part(body),
-    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.linkTargets())),
+    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships())),
     "word/styles.xml": part(stylesXml()),
     "word/footer1.xml": part(footerXml()),
     "word/header1.xml": part(headerXml(options.title)),
-  });
+  };
+  for (const [file, bytes] of renderer.mediaParts()) {
+    parts[`word/media/${file}`] = bytes;
+  }
+  return buildZip(parts);
 }

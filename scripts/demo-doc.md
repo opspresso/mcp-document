@@ -29,6 +29,10 @@
 
 # 아키텍처
 
+## 전체 구조
+
+![Agent Runtime을 중심으로 한 전체 구조](asset://architecture.png)
+
 ## 구성 요소
 
 ### Control Plane

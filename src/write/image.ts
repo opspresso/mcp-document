@@ -16,6 +16,12 @@ export class ImageError extends DocumentError {}
 
 export type ImageMime = "image/png" | "image/jpeg";
 
+/** One image a caller sent alongside the Markdown, decoded. */
+export interface ImageAsset {
+  mimeType: ImageMime;
+  bytes: Uint8Array;
+}
+
 export interface ImageSize {
   /** Pixels, straight from the header. */
   width: number;

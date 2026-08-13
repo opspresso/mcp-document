@@ -27,7 +27,8 @@ import { safeFilename } from "./filename.js";
 import { renderDocx } from "./write/docx.js";
 import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
-import { renderPptx, type PptxAsset } from "./write/pptx/index.js";
+import { renderPptx } from "./write/pptx/index.js";
+import type { ImageAsset } from "./write/image.js";
 
 /**
  * A text block, or an embedded resource carrying bytes.
@@ -130,10 +131,10 @@ export const TOOLS = [
         assets: {
           type: "object",
           description:
-            "Images to embed, pptx only: each key is a name the Markdown references as " +
-            "`![caption](asset://name)`, each value the image. A slide that is exactly one " +
-            "such image becomes a full-image slide with the caption under it. PNG and JPEG " +
-            "only — rasterise an SVG before sending it.",
+            "Images to embed, pptx and docx only: each key is a name the Markdown references " +
+            "as `![caption](asset://name)`, each value the image. A slide or paragraph that " +
+            "is exactly one such image becomes a full-width figure with the caption under it. " +
+            "PNG and JPEG only — rasterise an SVG before sending it.",
           additionalProperties: {
             type: "object",
             properties: {
@@ -283,7 +284,7 @@ const ASSET_MIMES = ["image/png", "image/jpeg"] as const;
 function parseAssets(
   raw: unknown,
   format: Format,
-): Record<string, PptxAsset> | undefined {
+): Record<string, ImageAsset> | undefined {
   if (raw === undefined || raw === null) {
     return undefined;
   }
@@ -294,15 +295,15 @@ function parseAssets(
   if (entries.length === 0) {
     return undefined;
   }
-  if (format !== "pptx") {
+  if (format !== "pptx" && format !== "docx") {
     throw new DocumentError(
-      "`assets` are embedded in pptx only — the other formats render an image as a link.",
+      "`assets` are embedded in pptx and docx only — the other formats render an image as a link.",
     );
   }
   if (entries.length > MAX_ASSET_COUNT) {
     throw new DocumentError(`${entries.length} assets is over the limit of ${MAX_ASSET_COUNT}.`);
   }
-  const assets: Record<string, PptxAsset> = {};
+  const assets: Record<string, ImageAsset> = {};
   let total = 0;
   for (const [name, value] of entries) {
     if (!ASSET_NAME.test(name)) {
@@ -348,12 +349,16 @@ function parseAssets(
 async function renderTo(
   format: Format,
   document: MarkdownDocument,
-  meta: { title: string; created: Date; filename: string; assets?: Record<string, PptxAsset> },
+  meta: { title: string; created: Date; filename: string; assets?: Record<string, ImageAsset> },
 ): Promise<ToolResult> {
   let bytes: Uint8Array;
   let extra = "";
   if (format === "docx") {
-    bytes = renderDocx(document, { title: meta.title, created: meta.created.toISOString() });
+    bytes = renderDocx(document, {
+      title: meta.title,
+      created: meta.created.toISOString(),
+      ...(meta.assets ? { assets: meta.assets } : {}),
+    });
   } else if (format === "hwpx") {
     bytes = renderHwpx(document, {
       title: meta.title,

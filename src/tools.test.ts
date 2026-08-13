@@ -161,7 +161,7 @@ test("a deck comes back as a deck, and says how many slides it is", async () => 
   assert.match(text, /3 slides/);
 });
 
-test("assets ride with pptx only, and an SVG is turned away with the fix named", async () => {
+test("assets ride with pptx and docx, and an SVG is turned away with the fix named", async () => {
   const png = {
     mimeType: "image/png",
     content: Buffer.from([
@@ -170,11 +170,11 @@ test("assets ride with pptx only, and an SVG is turned away with the fix named",
     ]).toString("base64"),
   };
   const wrongFormat = await call("render_document", {
-    format: "docx",
+    format: "hwpx",
     content: "# 보고서",
     assets: { "a.png": png },
   });
-  assert.ok(wrongFormat.isError && wrongFormat.text.includes("pptx only"), wrongFormat.text);
+  assert.ok(wrongFormat.isError && wrongFormat.text.includes("pptx and docx only"), wrongFormat.text);
 
   const svg = await call("render_document", {
     format: "pptx",
@@ -183,13 +183,15 @@ test("assets ride with pptx only, and an SVG is turned away with the fix named",
   });
   assert.ok(svg.isError && svg.text.includes("Rasterise"), svg.text);
 
-  const embedded = await call("render_document", {
-    format: "pptx",
-    content: "## 구조도\n\n![전체 구조](asset://a.png)",
-    assets: { "a.png": png },
-  });
-  assert.equal(embedded.isError, false, embedded.text);
-  assert.ok(embedded.file, "the deck came back with the picture inside");
+  for (const format of ["pptx", "docx"] as const) {
+    const embedded = await call("render_document", {
+      format,
+      content: "## 구조도\n\n![전체 구조](asset://a.png)",
+      assets: { "a.png": png },
+    });
+    assert.equal(embedded.isError, false, embedded.text);
+    assert.ok(embedded.file, `the ${format} came back with the picture inside`);
+  }
 });
 
 test("a deck that references an asset nobody sent is refused by name", async () => {

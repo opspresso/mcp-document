@@ -241,3 +241,37 @@ test(":::comparison becomes a two-column table with the columns as its header", 
   assert.ok(text.includes("IRSA | Pod Identity"), text);
   assert.ok(text.includes("표준 방식 | 신규 권장"), text);
 });
+
+test("an asset image standing alone becomes a centred figure with its caption", () => {
+  const png = new Uint8Array(33);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  png.set([0x00, 0x00, 0x00, 0x0d], 8);
+  png.set([0x49, 0x48, 0x44, 0x52], 12);
+  new DataView(png.buffer).setUint32(16, 640);
+  new DataView(png.buffer).setUint32(20, 400);
+  const bytes = renderDocx(parseMarkdown("![전체 구조](asset://d.png)\n\n다음 문단"), {
+    title: "t",
+    created: CREATED,
+    assets: { "d.png": { mimeType: "image/png", bytes: png } },
+  });
+  const body = partOf(bytes, "word/document.xml");
+  assert.ok(body.includes("<w:drawing>"), "the image is a native drawing");
+  const embed = /<a:blip r:embed="(rId\d+)"\/>/.exec(body)?.[1];
+  assert.ok(embed, "the blip names a relationship");
+  const rels = partOf(bytes, "word/_rels/document.xml.rels");
+  assert.ok(rels.includes(`Id="${embed}"`) && rels.includes('Target="media/image1.png"'));
+  assert.ok(partOf(bytes, "[Content_Types].xml").includes('Extension="png"'));
+  assert.ok(readEntries(bytes, ["word/media/image1.png"]).get("word/media/image1.png"));
+  assert.ok(docxToText(bytes).text.includes("전체 구조"), "the caption survives");
+});
+
+test("a referenced asset nobody sent is refused by name, and prose images stay links", () => {
+  assert.throws(
+    () => renderDocx(parseMarkdown("![x](asset://missing.png)"), { title: "t", created: CREATED }),
+    /asset:\/\/missing\.png/,
+  );
+  // Inside prose the image is an aside and remains a link — no bytes needed.
+  const body = partOf(build("설명과 ![그림](asset://d.png) 문장"), "word/document.xml");
+  assert.equal(body.includes("<w:drawing>"), false);
+  assert.ok(body.includes("<w:hyperlink"));
+});
