@@ -18,7 +18,7 @@ import { detect } from "../detect.js";
 import { parseMarkdown } from "../markdown.js";
 import { pptxToText } from "../read/pptx.js";
 import { listEntries, readEntries } from "../zip.js";
-import { renderPptx } from "./pptx.js";
+import { renderPptx } from "./pptx/index.js";
 
 const CREATED = "2026-08-13T00:00:00Z";
 

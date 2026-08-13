@@ -21,7 +21,7 @@ import { safeFilename } from "./filename.js";
 import { renderDocx } from "./write/docx.js";
 import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
-import { renderPptx } from "./write/pptx.js";
+import { renderPptx } from "./write/pptx/index.js";
 
 /**
  * A text block, or an embedded resource carrying bytes.
