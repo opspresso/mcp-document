@@ -529,6 +529,10 @@ class Renderer {
         );
       case "table":
         return this.table(block);
+      case "directive":
+        // A directive is a PPTX planning hint; on a page its contents stand
+        // where it stood.
+        return block.blocks.map((inner) => this.block(inner)).join("");
       case "rule":
         // OWPML's horizontal rule is a control object; a row of dashes is the
         // same mark on the page with none of the ways that can go wrong.

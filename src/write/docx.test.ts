@@ -173,3 +173,13 @@ test("an empty document is still a document", () => {
   assert.ok(listEntries(bytes).length > 0);
   assert.ok(partOf(bytes, "word/document.xml").includes("<w:body>"));
 });
+
+test("a pptx directive renders as its contents, with no fence in the page", () => {
+  // `:::cards` is a deck-planning hint; on a page the contents stand where it
+  // stood, and the fences never reach the text.
+  const text = roundTrip(":::cards\n### 하나\n\n설명\n:::\n\n뒤 문단");
+  assert.ok(text.includes("하나"));
+  assert.ok(text.includes("설명"));
+  assert.ok(text.includes("뒤 문단"));
+  assert.equal(text.includes(":::"), false);
+});

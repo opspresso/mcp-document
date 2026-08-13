@@ -155,6 +155,11 @@ export function asComparison(title: readonly Run[], blocks: readonly Block[]): S
   if (!COMPARISON_TITLE.test(plainTextOf(title))) {
     return undefined;
   }
+  return asColumns(title, blocks);
+}
+
+/** The two-column shape itself, with no opinion about the title. */
+function asColumns(title: readonly Run[], blocks: readonly Block[]): Slide | undefined {
   const columns: CompareColumn[] = [];
   for (const block of blocks) {
     if (isSubheading(block)) {
@@ -265,4 +270,39 @@ export function specialise(title: readonly Run[] | undefined, blocks: readonly B
     asProcess(title, blocks) ??
     asQuote(title, blocks)
   );
+}
+
+/**
+ * The archetype a `:::name` directive asked for, tried against its contents.
+ *
+ * A directive overrides *recognition*, not fit: it skips the guards that exist
+ * only to avoid surprising an author — the "vs" a comparison title must say —
+ * and keeps the ones that are about the geometry, because five cards do not
+ * fit a row however clearly they were requested. Content that cannot form the
+ * named archetype falls back to a plain slide rather than failing the render.
+ */
+export function forceArchetype(
+  name: string,
+  title: readonly Run[] | undefined,
+  blocks: readonly Block[],
+): Slide | undefined {
+  if (!title) {
+    return undefined;
+  }
+  switch (name) {
+    case "cards":
+      return asCards(title, blocks);
+    case "metrics":
+      return asMetrics(title, blocks);
+    case "comparison":
+      return asColumns(title, blocks);
+    case "timeline":
+      return asTimeline(title, blocks);
+    case "process":
+      return asProcess(title, blocks);
+    case "quote":
+      return asQuote(title, blocks);
+    default:
+      return undefined;
+  }
 }

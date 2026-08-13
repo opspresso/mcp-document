@@ -403,6 +403,35 @@ test("a timeline draws stations on a line, the dates above and the work below", 
   assert.ok(text.includes("전사 배포"), text);
 });
 
+test("a directive forces its archetype past the guards recognition keeps", () => {
+  // No "vs" in the title, so recognition alone would make cards of this; the
+  // directive says comparison and the shape can form one.
+  const bytes = build(
+    "## 인증 방식\n\n:::comparison\n### IRSA\n\n- 표준\n\n### Pod Identity\n\n- 신규 권장\n:::",
+  );
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.match(/prst="roundRect"/g)?.length, 2, "two chips, so a comparison");
+});
+
+test("a directive whose contents cannot form the archetype falls back to content", () => {
+  // Six steps do not fit a process row however clearly it was requested.
+  const bytes = build("## 절차\n\n:::process\n1. a\n2. b\n3. c\n4. d\n5. e\n6. f\n:::");
+  const slide = partOf(bytes, "ppt/slides/slide1.xml");
+  assert.equal(slide.includes('prst="rightArrow"'), false, "no arrows: it fell back");
+  assert.ok(pptxToText(bytes).text.includes("6. f"), "nothing was dropped in the fall");
+});
+
+test("an overflowing slide breaks before the last sub-heading, which titles the continuation", () => {
+  const filler = Array.from({ length: 10 }, (_, index) => `- 항목 ${index + 1}`).join("\n");
+  const text = roundTrip(
+    `## 아키텍처\n\n${filler}\n\n### Control Plane\n\n- 정책 관리\n- 감사 로그\n- 변경 승인`,
+  );
+  // The topic moved whole: its heading is now the continuation's title, and
+  // nothing of it stayed behind on the first slide.
+  assert.ok(text.includes("## Slide 2\n아키텍처 — Control Plane\n• 정책 관리"), text);
+  assert.equal(text.includes("(계속)"), false, text);
+});
+
 test("the divider's ground and the cover's band are layout furniture, not slide shapes", () => {
   const bytes = build("# 표지\n\n# 장");
   // The section layout carries the brand field; the divider slide itself only

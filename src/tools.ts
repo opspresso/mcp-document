@@ -14,7 +14,7 @@
 
 import { DocumentError } from "./errors.js";
 import { asUntrustedContent, MAX_MARKDOWN_CHARS, MAX_RENDERED_BYTES } from "./limits.js";
-import { parseMarkdown, type Block, type MarkdownDocument } from "./markdown.js";
+import { parseMarkdown, withoutDirectives, type Block, type MarkdownDocument } from "./markdown.js";
 import { readDocument } from "./read/document.js";
 import { loadSource } from "./source.js";
 import { safeFilename } from "./filename.js";
@@ -89,11 +89,18 @@ export const TOOLS = [
       "horizontal rules. A table column is set flush right with `---:` in the divider row and " +
       "centred with `:---:` — set columns of numbers right, or their digits do not line up. " +
       "Two lines with no blank line between them are one paragraph, as in " +
-      "Markdown. Images are not embedded; an image becomes a link. In pptx every level 1 or 2 " +
-      "heading starts a new slide and becomes its title, so write one heading per slide and " +
-      "keep what follows it short — a few bullets or a small table; deeper headings stay in " +
-      "the body, and anything that does not fit continues on the next slide. Returns the file " +
-      "itself; the caller delivers it to the user.",
+      "Markdown. Images are not embedded; an image becomes a link. In pptx the Markdown " +
+      "becomes a designed deck: an opening `#` is the cover and its first paragraph the " +
+      "subtitle, every later `#` a numbered section divider, every `##` a slide. A slide " +
+      "whose shape says what it is gets a matching layout — two to four `###`s with a short " +
+      "line each become cards, a short bullet list of figures (`- 99.99% Availability`) " +
+      "becomes big-number metrics, a lone block quote (with `— author`) a quote slide, two " +
+      "`###`s under an 'A vs B' title a two-column comparison, three to five short numbered " +
+      "steps a process flow, date-led steps (`1. Q1 파일럿`) a timeline, and a final 감사합니다 " +
+      "or Thank-you heading the closing slide. Wrap one such group in `:::cards` … `:::` " +
+      "(also metrics, comparison, process, timeline, quote) to force the layout when the " +
+      "shape alone would not; other formats ignore the fences and render the contents. " +
+      "Returns the file itself; the caller delivers it to the user.",
     inputSchema: {
       type: "object",
       properties: {
@@ -179,8 +186,10 @@ async function read(args: Record<string, unknown>): Promise<ToolResult> {
 
 /** What the document turned out to be, for the line the caller reads. */
 export function summarise(document: MarkdownDocument): string {
+  // Directives spliced open, so their contents are counted as what they are.
+  const { blocks } = withoutDirectives(document);
   const count = (kind: Block["kind"]): number =>
-    document.blocks.filter((block) => block.kind === kind).length;
+    blocks.filter((block) => block.kind === kind).length;
   const parts = [
     [count("heading"), "heading"],
     [count("paragraph"), "paragraph"],

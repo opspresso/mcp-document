@@ -5,7 +5,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseInline, parseMarkdown, plainTextOf, type Block } from "./markdown.js";
+import { parseInline, parseMarkdown, plainTextOf, withoutDirectives, type Block } from "./markdown.js";
 
 function blocks(source: string): Block[] {
   return parseMarkdown(source).blocks;
@@ -171,4 +171,44 @@ test("an image becomes a link to the picture, labelled with its alt text", () =>
 
 test("an empty document has no blocks and no title", () => {
   assert.deepEqual(parseMarkdown("   \n\n  "), { blocks: [] });
+});
+
+test("a ::: fence is a directive holding the blocks inside it", () => {
+  const parsed = blocks(":::cards\n### A\n\n하나\n:::\n\n뒤 문단");
+  assert.equal(parsed[0]?.kind, "directive");
+  assert.ok(parsed[0]?.kind === "directive" && parsed[0].name === "cards");
+  assert.ok(parsed[0]?.kind === "directive" && parsed[0].blocks[0]?.kind === "heading");
+  assert.equal(parsed[1]?.kind, "paragraph");
+});
+
+test("an unclosed directive takes the rest of the document, as an unclosed fence does", () => {
+  const parsed = blocks(":::metrics\n- 99% a\n- 43% b");
+  assert.equal(parsed.length, 1);
+  assert.ok(parsed[0]?.kind === "directive" && parsed[0].blocks[0]?.kind === "list");
+});
+
+test("a directive fence does not glue onto the paragraph above it", () => {
+  const parsed = blocks("문단\n:::quote\n> 인용\n:::");
+  assert.equal(parsed[0]?.kind, "paragraph");
+  assert.equal(parsed[1]?.kind, "directive");
+});
+
+test("a lone ::: with no name is text, not a directive", () => {
+  assert.equal(blocks(":::")[0]?.kind, "paragraph");
+});
+
+test("withoutDirectives splices contents where the directive stood", () => {
+  const document = parseMarkdown("앞\n\n:::cards\n### A\n:::\n\n뒤");
+  const flat = withoutDirectives(document);
+  assert.deepEqual(
+    flat.blocks.map((block) => block.kind),
+    ["paragraph", "heading", "paragraph"],
+  );
+});
+
+test("directive nesting stops recursing at a sane depth", () => {
+  // A hundred thousand unclosed opens must be a document, not a stack.
+  const hostile = Array.from({ length: 2000 }, () => ":::a").join("\n");
+  const parsed = parseMarkdown(hostile);
+  assert.ok(parsed.blocks.length > 0, "it parses rather than overflowing");
 });

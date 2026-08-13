@@ -33,7 +33,7 @@
 import type { Block, MarkdownDocument, Run } from "../../markdown.js";
 import { plainTextOf } from "../../markdown.js";
 import { PALETTE } from "../theme.js";
-import { specialise } from "./detect.js";
+import { forceArchetype, specialise } from "./detect.js";
 import {
   BODY_LINES,
   BODY_SIZE,
@@ -65,11 +65,14 @@ function piecesOf(block: Block): Piece[] {
   switch (block.kind) {
     case "heading":
       // Levels 1 and 2 opened a slide and never reach here; 3 to 6 are set as
-      // bold sub-headings, which is what they read as on a slide.
+      // bold sub-headings, which is what they read as on a slide. `opens` is
+      // for the packer: a break lands better just before a topic than inside
+      // one.
       return [
         {
           kind: "text",
           runs: block.runs,
+          opens: true,
           style: {
             size: SUBHEADING_SIZES[Math.min(block.level, 6) - 3] ?? BODY_SIZE,
             bold: true,
@@ -119,6 +122,10 @@ function piecesOf(block: Block): Piece[] {
       // which is a second layout problem for a mark this small. The same row of
       // dashes `write/hwpx.ts` settles for.
       return [{ kind: "text", runs: [{ text: "─".repeat(30) }], style: { size: BODY_SIZE, colour: PALETTE.rule, indent: 0 } }];
+    case "directive":
+      // On a slide that is not the archetype it asked for, a directive's
+      // contents stand where it stood — same rule as the page renderers.
+      return block.blocks.flatMap(piecesOf);
   }
 }
 
@@ -186,6 +193,21 @@ function pack(pieces: readonly Piece[], budget: number): Piece[][] {
         pending = undefined;
         continue;
       }
+      // The slide is full. Prefer to break just before the last sub-heading on
+      // it: "Control Plane" and its first line on one slide, the rest on the
+      // next, is a topic split in half — moving the heading keeps it whole.
+      const cut = current.reduce(
+        (found, candidate, at) => (candidate.kind === "text" && candidate.opens ? at : found),
+        0,
+      );
+      if (cut > 0) {
+        const moved = current.slice(cut);
+        current = current.slice(0, cut);
+        flush();
+        current = moved;
+        used = moved.reduce((sum, one) => sum + linesOf(one), 0);
+        continue;
+      }
       flush();
     }
   }
@@ -228,19 +250,34 @@ function sectionsOf(document: MarkdownDocument): Section[] {
   return sections.length > 0 ? sections : [{ kind: "body", blocks: [] }];
 }
 
-/** Content slides for a section's blocks: the first carries `title`, the rest `(계속)`. */
+/**
+ * Content slides for a section's blocks: the first carries `title`, the rest
+ * continue it.
+ *
+ * A continuation that *starts on a sub-heading* is titled with it — "아키텍처
+ * — Control Plane" — and the heading leaves the body, because it is now the
+ * title. Only a continuation that starts mid-flow falls back to `(계속)`,
+ * which tells the reader the break was mechanical rather than meant.
+ */
 function contentSlides(title: Run[] | undefined, blocks: readonly Block[]): Slide[] {
   const pages = pack(blocks.flatMap(piecesOf), BODY_LINES);
   if (pages.length === 0) {
     return title ? [{ type: "content", title, pieces: [] }] : [];
   }
-  return pages.map((pieces, index) => ({
-    type: "content",
-    pieces,
-    ...(title
-      ? { title: index === 0 ? title : [...title, { text: CONTINUED }] }
-      : {}),
-  }));
+  return pages.map((pieces, index) => {
+    if (index === 0 || !title) {
+      return { type: "content", pieces, ...(title ? { title } : {}) };
+    }
+    const [head, ...rest] = pieces;
+    if (head?.kind === "text" && head.opens && rest.length > 0) {
+      return {
+        type: "content",
+        title: [...title, { text: " — " }, ...head.runs],
+        pieces: rest,
+      };
+    }
+    return { type: "content", title: [...title, { text: CONTINUED }], pieces };
+  });
 }
 
 /** True when this section should close the deck rather than continue it. */
@@ -296,8 +333,17 @@ export function plan(document: MarkdownDocument): Presentation {
       return;
     }
 
-    // A section whose shape names an archetype — cards, metrics, a quote, a
-    // comparison — takes it; everything else is packed as content.
+    // A `:::name` directive filling the whole section says what the slide is;
+    // recognition handles the sections that never asked. Either way, content
+    // that cannot form the archetype falls back to a plain slide.
+    const [only] = section.blocks;
+    if (section.blocks.length === 1 && only?.kind === "directive") {
+      const forced = forceArchetype(only.name, section.title, only.blocks);
+      if (forced) {
+        slides.push(forced);
+        return;
+      }
+    }
     const special = specialise(section.title, section.blocks);
     if (special) {
       slides.push(special);

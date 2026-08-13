@@ -551,6 +551,13 @@ class Writer {
         });
         this.space(PARAGRAPH_SPACE);
         return;
+      case "directive":
+        // A directive is a PPTX planning hint; on a page its contents stand
+        // where it stood.
+        for (const inner of block.blocks) {
+          this.block(inner);
+        }
+        return;
     }
   }
 }

@@ -238,6 +238,10 @@ class Renderer {
           [],
           `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${PALETTE.rule}"/></w:pBdr>`,
         );
+      case "directive":
+        // A directive is a PPTX planning hint; on a page its contents stand
+        // where it stood.
+        return block.blocks.map((inner) => this.block(inner)).join("");
     }
   }
 }

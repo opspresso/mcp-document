@@ -37,7 +37,13 @@ export interface Style {
  * whole: its rows have to line up, so it is split by row rather than by line.
  */
 export type Piece =
-  | { kind: "text"; runs: Run[]; style: Style }
+  | {
+      kind: "text";
+      runs: Run[];
+      style: Style;
+      /** A sub-heading opens a topic: the packer prefers to break just before one. */
+      opens?: boolean;
+    }
   | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] };
 
 /** One card: a sub-heading and at most a line or two under it. */

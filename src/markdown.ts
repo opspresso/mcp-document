@@ -58,7 +58,15 @@ export type Block =
   | { kind: "code"; language?: string; text: string }
   | { kind: "quote"; runs: Run[] }
   | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] }
-  | { kind: "rule" };
+  | { kind: "rule" }
+  /**
+   * `:::name` … `:::` — a container that names what its contents *are*.
+   *
+   * The page renderers unwrap it and render the contents as if the fences were
+   * never written, which is the safe meaning everywhere; the PPTX planner reads
+   * the name as a slide archetype. Not nested: the first `:::` line closes.
+   */
+  | { kind: "directive"; name: string; blocks: Block[] };
 
 export interface MarkdownDocument {
   blocks: Block[];
@@ -70,10 +78,19 @@ export interface MarkdownDocument {
 const MAX_INLINE_DEPTH = 4;
 /** How deep a list may indent. Past this, everything is at the last level. */
 const MAX_LIST_DEPTH = 4;
+/**
+ * How deep directives may nest before `:::` is taken literally. Nesting is not
+ * a feature — the first close fence closes — but an unclosed open inside an
+ * unclosed open recurses, and a hundred thousand of them is a stack, not a
+ * document.
+ */
+const MAX_DIRECTIVE_DEPTH = 4;
 
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const RULE = /^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([^`\s]*)/;
+const DIRECTIVE_OPEN = /^:::\s*([a-z][a-z-]*)\s*$/;
+const DIRECTIVE_CLOSE = /^:::\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const LIST_ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
 const TABLE_DIVIDER = /^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/;
@@ -245,7 +262,7 @@ function alignmentsOf(divider: string): Align[] {
   });
 }
 
-export function parseMarkdown(source: string): MarkdownDocument {
+export function parseMarkdown(source: string, depth = 0): MarkdownDocument {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   let index = 0;
@@ -282,6 +299,25 @@ export function parseMarkdown(source: string): MarkdownDocument {
       index += 1;
       const language = fence[2];
       blocks.push({ kind: "code", text: body.join("\n"), ...(language ? { language } : {}) });
+      continue;
+    }
+
+    const directive = depth < MAX_DIRECTIVE_DEPTH ? DIRECTIVE_OPEN.exec(line) : null;
+    if (directive?.[1]) {
+      index += 1;
+      const inner: string[] = [];
+      while (index < lines.length && !DIRECTIVE_CLOSE.test(lines[index]!)) {
+        inner.push(lines[index]!);
+        index += 1;
+      }
+      // A directive the caller never closed takes the rest of the document,
+      // exactly as an unclosed fence does.
+      index += 1;
+      blocks.push({
+        kind: "directive",
+        name: directive[1],
+        blocks: parseMarkdown(inner.join("\n"), depth + 1).blocks,
+      });
       continue;
     }
 
@@ -361,7 +397,8 @@ export function parseMarkdown(source: string): MarkdownDocument {
         !RULE.test(candidate) &&
         !FENCE.test(candidate) &&
         !QUOTE.test(candidate) &&
-        !LIST_ITEM.test(candidate),
+        !LIST_ITEM.test(candidate) &&
+        !(depth < MAX_DIRECTIVE_DEPTH && DIRECTIVE_OPEN.test(candidate)),
       (candidate) => candidate.trim(),
     );
     blocks.push({ kind: "paragraph", runs: parseInline(paragraph.join(" ")) });
@@ -375,4 +412,16 @@ export function parseMarkdown(source: string): MarkdownDocument {
 /** The characters of a run list, with the styling dropped. */
 export function plainTextOf(runs: readonly Run[]): string {
   return runs.map((run) => run.text).join("");
+}
+
+/**
+ * The document with every directive spliced open.
+ *
+ * What the page renderers and the summary see: a directive is a PPTX planning
+ * hint, and everywhere else its contents stand where it stood.
+ */
+export function withoutDirectives(document: MarkdownDocument): MarkdownDocument {
+  const flatten = (blocks: readonly Block[]): Block[] =>
+    blocks.flatMap((block) => (block.kind === "directive" ? flatten(block.blocks) : [block]));
+  return { ...document, blocks: flatten(document.blocks) };
 }
