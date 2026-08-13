@@ -128,9 +128,11 @@ ATX headings, paragraphs, `**bold**`, `*italic*`, `` `code` ``, links, bullet
 and numbered lists nested up to four levels (two spaces of indent to a level),
 GFM tables **with column alignment** (`---:` sets a column flush right, `:---:`
 centres it), block quotes, fenced code blocks, horizontal rules, and
-`:::name` … `:::` directives — a container the presentation engine reads as a
-slide archetype and every other format unwraps, rendering the contents as if
-the fences were never written.
+`:::name` … `:::` directives — a container that names what its contents are.
+The presentation engine reads the name as a slide archetype; the document
+engine gives two of them a page treatment of their own (`:::metrics`,
+`:::comparison`); every other format unwraps the fences and renders the
+contents as if they were never written.
 
 Two lines with no blank line between them are **one paragraph**, as Markdown
 says. A renderer cannot recover a distinction the parser threw away, so the tool
@@ -143,11 +145,11 @@ exception: nothing here fetches pictures, so `![alt](url)` becomes a link
 labelled with its alt text, which keeps both the description and the address.
 The one way an image gets *into* a document is `render_document`'s optional
 `assets` argument — PNG or JPEG bytes sent by name alongside the Markdown,
-referenced as `![caption](asset://name)`, and embedded by the pptx renderer
-(see below). A referenced asset nobody sent is refused by name, and SVG is
-refused with the fix stated: PowerPoint's `svgBlip` demands a raster fallback
-part beside the vector one, and producing that means rasterising, which this
-repository does not do. Rasterise first, send the PNG.
+referenced as `![caption](asset://name)`, and embedded by the pptx and docx
+renderers (see below). A referenced asset nobody sent is refused by name, and
+SVG is refused with the fix stated: PowerPoint's `svgBlip` demands a raster
+fallback part beside the vector one, and producing that means rasterising,
+which this repository does not do. Rasterise first, send the PNG.
 
 Lists carry **literal markers** in all four formats rather than a numbering
 definition. What real numbering buys is the reader's editor renumbering a list
@@ -206,6 +208,47 @@ whose layout this repository decides, draws the number directly and only when
 there is more than one page. **HWPX gets none** — OWPML puts a footer in a
 control with its own sub-list anchored to the section, and that is a shape to get
 exactly right against the one reader that either opens a file or does not.
+
+### The document engine
+
+`docx` reads the same structure the presentation engine does and answers with
+a *report* rather than a deck — because a page reflows where a slide is a
+fixed box, the machinery differs entirely: no packing, no layout selection,
+just the devices a document earns.
+
+**An opening `#` is the cover**: the title oversized on its own page, the
+first paragraph under it as the subtitle, a brand rule above, and no running
+head or page number on it (`titlePg`). The cover title is `Heading1` with its
+size overridden inline, deliberately — the style id is what this server's own
+reader maps back to `#`, and a cover styled any other way reads back as a
+document that lost its title. **Every later `#` opens a chapter** on a fresh
+page, a large light-brand ordinal above the heading. **The running head**
+names the document on every page but the cover, in the header part where no
+text extractor looks. A quote is a **callout** — the brand bar and the tint
+ground, the console's aside carried onto paper.
+
+**A report with a cover and three or more level 1-2 headings gets a contents
+page.** The TOC is a field whose result is left blank: this renderer does not
+paginate, so the page numbers a TOC wants are numbers only Word can know —
+`settings.xml` asks Word to update fields on open, which is how every
+generator that does not lay out pages ships a TOC. A document with less
+structure gets no contents page and no settings part.
+
+**Directives get a page treatment only when asked.** `:::metrics` becomes a
+key-figure strip — the numbers large in the brand colour, names beneath, a
+borderless table doing the alignment; `:::comparison` becomes a two-column
+table with the column names as its header row. Nothing is recognised
+automatically here, deliberately: a document is prose, and prose transformed
+unasked is prose misquoted. The deck recognises; the page waits to be told.
+The other directive names unwrap — a page already reads a list as a list.
+
+**A paragraph that is exactly one `![caption](asset://…)` image is a figure**:
+the picture centred at its aspect ratio, never upscaled past its pixels, the
+caption under it in the muted caption size. An image inside prose stays a
+link, as it always was.
+
+`npm run demo:docx` renders `scripts/demo-doc.md` — a report that uses every
+device — into `build/demo.docx`, the review surface for any change here.
 
 ### The presentation engine
 

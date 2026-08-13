@@ -96,7 +96,11 @@ export const TOOLS = [
       "horizontal rules. A table column is set flush right with `---:` in the divider row and " +
       "centred with `:---:` — set columns of numbers right, or their digits do not line up. " +
       "Two lines with no blank line between them are one paragraph, as in " +
-      "Markdown. Images are not embedded; an image becomes a link. In pptx the Markdown " +
+      "Markdown. In docx the Markdown becomes a designed report: an opening `#` is a cover " +
+      "page with the first paragraph as its subtitle, every later `#` a numbered chapter on " +
+      "a fresh page, and a cover plus three or more `#`/`##` headings adds a contents page " +
+      "Word fills in on open. Block quotes are callout boxes; `:::metrics` renders a " +
+      "key-figure strip and `:::comparison` a two-column table. In pptx the Markdown " +
       "becomes a designed deck: an opening `#` is the cover and its first paragraph the " +
       "subtitle, every later `#` a numbered section divider, every `##` a slide. A slide " +
       "whose shape says what it is gets a matching layout — two to four `###`s with a short " +
@@ -106,7 +110,9 @@ export const TOOLS = [
       "steps a process flow, date-led steps (`1. Q1 파일럿`) a timeline, and a final 감사합니다 " +
       "or Thank-you heading the closing slide. Wrap one such group in `:::cards` … `:::` " +
       "(also metrics, comparison, process, timeline, quote) to force the layout when the " +
-      "shape alone would not; other formats ignore the fences and render the contents. " +
+      "shape alone would not; formats with no treatment for a directive render its contents " +
+      "as if the fences were never written. In pptx and docx an image whose bytes were sent " +
+      "in `assets` and which stands alone becomes an embedded, captioned figure. " +
       "Returns the file itself; the caller delivers it to the user.",
     inputSchema: {
       type: "object",
