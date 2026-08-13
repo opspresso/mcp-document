@@ -367,25 +367,9 @@ function sectionProperties(): string {
 }
 
 /**
- * Characters that take a full em; everything else is counted as half.
- *
- * The same approximation the PPTX renderer packs slides with, restated here
- * because the two units differ — a glyph at `size` centi-points is about
- * `size` HWPUNIT wide, which is what makes the arithmetic below one line.
- */
-const WIDE =
-  /[ᄀ-ᇿ⺀-〿぀-ヿ㄰-㆏㐀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦]/;
-
-/**
- * How much of the stated width the estimator lets a line claim.
- *
- * The character-width approximation runs a few percent narrow of 함초롬바탕's
- * real metrics — bold runs, an em dash counted as half, Latin that is not
- * quite half an em — and a paragraph the estimate put on one line that 한글
- * wraps onto two is exactly the shape its checker flags as depending on
- * non-standard reflow. Under-claiming biases the boundary the safe way: a
- * break a character early is a boundary 한글 quietly moves back, a break that
- * never came is a warning dialog.
+ * How much of the stated width the estimator lets a line claim, on top of the
+ * worst-case advance below. Belt and braces: the cost of a spare lineseg is a
+ * few bytes, the cost of a missing one is a dialog.
  */
 const LINESEG_SAFETY = 0.92;
 
@@ -395,9 +379,17 @@ const LINESEG_SAFETY = 0.92;
  * 한글 recalculates all of this on open, so the numbers only have to be
  * plausible — but the *count* is looked at before any recalculation: a wrapped
  * paragraph carrying a single lineseg is a shape 한글 itself never writes, and
- * its document checker flags the file as depending on non-standard reflow.
- * The break positions are estimated with the character-width approximation
- * above; being a character out moves a boundary 한글 will move back anyway.
+ * document checkers flag the file as depending on non-standard reflow.
+ *
+ * The count is therefore computed against the most pessimistic reading there
+ * is: **every character a full em, and an escaped character at the length of
+ * its escape**. A per-script half-width estimate — the first design — kept
+ * being one judgement call short of whatever metric the checker of the day
+ * used: real 함초롬바탕 advances for one, the raw `&quot;`-inflated element
+ * text for another. The two failure modes are not symmetric, and that decides
+ * it: a lineseg too many is a boundary 한글 silently recomputes, a lineseg
+ * too few is a warning dialog in front of the reader. Break positions are
+ * estimates either way; being early moves a boundary 한글 moves back anyway.
  */
 function lineSegments(text: string, size: number, width: number): string {
   const lineHeight = Math.round(size * 1.6);
@@ -407,7 +399,7 @@ function lineSegments(text: string, size: number, width: number): string {
   let used = 0;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index]!;
-    const advance = character === "\t" ? size * 2 : WIDE.test(character) ? size : size / 2;
+    const advance = character === "\t" ? size * 2 : size * escapeXml(character).length;
     if (used + advance > usable && used > 0) {
       starts.push(index);
       used = 0;
