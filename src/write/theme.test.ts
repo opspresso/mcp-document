@@ -75,9 +75,9 @@ test("a colour is one value, whatever form it is asked for", () => {
   const { r, g, b } = rgbOf("onBrand");
   assert.deepEqual([r, g, b], [1, 1, 1]);
   assert.deepEqual(rgbOf("ink"), {
-    r: 0x1f / 255,
-    g: 0x1d / 255,
-    b: 0x2b / 255,
+    r: 0x21 / 255,
+    g: 0x25 / 255,
+    b: 0x29 / 255,
   });
 });
 

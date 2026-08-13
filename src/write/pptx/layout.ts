@@ -129,7 +129,7 @@ export const SUBHEADING_SIZES = DECK.subheadings.map(centiPoints);
 /**
  * The bar under a slide's title.
  *
- * This is where the console's lavender page ended up. A deck is the one output
+ * A deck is the one output
  * that can afford a full-bleed tint — a slide is shown, not printed by the
  * hundred — so the cover and section slides take the tint, and every ordinary
  * slide gets this instead: a short brand rule under the title, which says the

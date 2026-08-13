@@ -15,6 +15,7 @@ import { docxToText } from "../read/docx.js";
 import { parseMarkdown } from "../markdown.js";
 import { listEntries, readEntries } from "../zip.js";
 import { renderDocx } from "./docx.js";
+import { PALETTE } from "./theme.js";
 
 const CREATED = "2026-08-05T00:00:00Z";
 
@@ -221,7 +222,10 @@ test("a mid-document # opens a numbered chapter on a fresh page", () => {
 
 test("a quote is a callout: the tint behind it, the bar beside it", () => {
   const styles = partOf(build("> 인용문"), "word/styles.xml");
-  assert.match(styles, /Quote[\s\S]*?<w:shd w:val="clear" w:color="auto" w:fill="F4F3FE"\/>/);
+  assert.match(
+    styles,
+    new RegExp(`Quote[\\s\\S]*?<w:shd w:val="clear" w:color="auto" w:fill="${PALETTE.brandTint}"/>`),
+  );
 });
 
 test(":::metrics becomes a key-figure strip, and only when asked", () => {
