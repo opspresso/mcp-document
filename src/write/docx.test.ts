@@ -276,17 +276,18 @@ test("a referenced asset nobody sent is refused by name, and prose images stay l
   assert.ok(body.includes("<w:hyperlink"));
 });
 
-test("a report with a cover and enough structure gets a contents page Word fills in", () => {
+test("a report with a cover and enough structure gets a contents page, complete as written", () => {
   const report = "# 보고서\n\n부제\n\n# 첫 장\n\n## 절\n\n내용\n\n# 둘째 장\n\n내용";
   const bytes = build(report);
   const body = partOf(bytes, "word/document.xml");
-  assert.ok(body.includes('w:instr=" TOC \\o &quot;1-3&quot; \\h \\z \\u "'), "the TOC is a field");
-  assert.ok(body.indexOf("TOC") < body.indexOf("첫 장"), "the contents page precedes the body");
-  // The pages a TOC names are pages only Word can know, so Word is asked to
-  // update fields on open.
-  assert.ok(partOf(bytes, "word/settings.xml").includes('<w:updateFields w:val="true"/>'));
-  assert.ok(partOf(bytes, "[Content_Types].xml").includes("/word/settings.xml"));
-  assert.ok(docxToText(bytes).text.includes("목차"), "the label is visible text");
+  // A field without page numbers (`\n`), so the renderer can compute the whole
+  // result itself: nothing is left for Word to fill in, and no settings part
+  // asks it to — asking is what put a dialog in front of every reader.
+  assert.ok(body.includes(' TOC \\o "1-2" \\h \\n '), "the TOC is a field, numbers omitted");
+  assert.ok(body.includes('<w:fldChar w:fldCharType="separate"/>'), "the result is cached");
+  assert.equal(listEntries(bytes).some((entry) => entry.name === "word/settings.xml"), false);
+  const text = docxToText(bytes).text;
+  assert.ok(text.includes("목차\n첫 장\n절\n둘째 장"), text);
 });
 
 test("the contents label follows the cover's language", () => {
@@ -294,11 +295,10 @@ test("the contents label follows the cover's language", () => {
   assert.ok(docxToText(english).text.includes("Contents"));
 });
 
-test("a memo gets no contents page, and no settings part to update it", () => {
+test("a memo gets no contents page", () => {
   // Too little structure to list, or no cover at all: either way, no TOC.
   const short = build("# 메모\n\n한 줄\n\n## 하나\n\n내용");
   assert.equal(partOf(short, "word/document.xml").includes("TOC"), false);
-  assert.equal(listEntries(short).some((entry) => entry.name === "word/settings.xml"), false);
   const coverless = build("## 하나\n\n내용\n\n## 둘\n\n내용\n\n## 셋\n\n내용");
   assert.equal(partOf(coverless, "word/document.xml").includes("TOC"), false);
 });

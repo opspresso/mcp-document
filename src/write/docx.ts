@@ -48,11 +48,10 @@ const RELATIONSHIPS = "http://schemas.openxmlformats.org/package/2006/relationsh
 /** One indent level, in twentieths of a point: 0.63cm, Word's own list step. */
 const INDENT_STEP = 360;
 
-/** rId1 styles, rId2 footer, rId3 header, rId4 settings; the rest take what is left. */
+/** rId1 is styles, rId2 the footer, rId3 the header; the rest take what is left. */
 const FOOTER_RELATIONSHIP = "rId2";
 const HEADER_RELATIONSHIP = "rId3";
-const SETTINGS_RELATIONSHIP = "rId4";
-const FIRST_LINK_RELATIONSHIP = 5;
+const FIRST_LINK_RELATIONSHIP = 4;
 
 /** What is left of the page once the margins are taken out — a full-width table. */
 const TABLE_WIDTH = 11906 - 1418 * 2;
@@ -305,12 +304,23 @@ class Renderer {
 
   /**
    * The contents page: a heading-sized label and a `TOC` field whose result is
-   * left for Word to compute — `settings.xml` asks it to, on open. The label
-   * is styled like a level 1 heading but is deliberately not one: a Heading
-   * paragraph carries an outline level, and a table of contents that lists
-   * itself is the oldest TOC bug there is.
+   * computed *here*, without page numbers.
+   *
+   * The `\n` switch is the decision that makes the rest honest. Page numbers
+   * are the one thing about a contents page this renderer cannot know — text
+   * reflows to the reader's fonts — and the first design asked Word to fill
+   * them in via `settings.xml`'s `updateFields`, which turns out to greet
+   * every reader with a dialog about fields referring to other files. A
+   * contents page that lists the headings and skips the numbers is one this
+   * renderer can finish itself: correct as written, no update to ask for, no
+   * dialog. The field wrapper stays, so a reader who edits the headings can
+   * still press F9 and have Word regenerate the list.
+   *
+   * The label is styled like a level 1 heading but is deliberately not one: a
+   * Heading paragraph carries an outline level, and a table of contents that
+   * lists itself is the oldest TOC bug there is.
    */
-  tocPage(label: string): string {
+  tocPage(label: string, entries: readonly { runs: readonly Run[]; level: number }[]): string {
     const heading = this.paragraph(
       [{ text: label, bold: true }],
       '<w:spacing w:before="0" w:after="240"/>' +
@@ -318,13 +328,35 @@ class Renderer {
       PALETTE.brand,
       halfPoints(DOC.headings[0]),
     );
-    // The cached result is one blank — Word fills it when it updates the
-    // field, and a blank stays out of every text extractor's way.
-    const field =
-      "<w:p>" +
-      '<w:fldSimple w:instr=" TOC \\o &quot;1-3&quot; \\h \\z \\u ">' +
-      '<w:r><w:t xml:space="preserve"> </w:t></w:r></w:fldSimple></w:p>';
-    return heading + field + '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    // A multi-paragraph field cannot be a `fldSimple`, which is a run-level
+    // element: the begin, the instruction and the separator open the first
+    // entry's paragraph, and the end closes the last one's — the shape Word
+    // itself writes a TOC in.
+    const open =
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-2" \\h \\n </w:instrText></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>';
+    const close = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+    const cached = entries
+      .map((entry, at) => {
+        const properties =
+          `<w:pPr><w:spacing w:after="60"/><w:ind w:left="${(entry.level - 1) * INDENT_STEP}"/></w:pPr>`;
+        const colour =
+          entry.level === 1 ? "" : `<w:rPr><w:color w:val="${PALETTE.inkMuted}"/></w:rPr>`;
+        // Plain text, not the heading's runs: a bold word mid-heading is
+        // emphasis in the body, noise in a list of contents.
+        const text = textElement(entry.runs.map((run) => run.text).join(""));
+        return (
+          "<w:p>" +
+          properties +
+          (at === 0 ? open : "") +
+          `<w:r>${colour}${text}</w:r>` +
+          (at === entries.length - 1 ? close : "") +
+          "</w:p>"
+        );
+      })
+      .join("");
+    return heading + cached + '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
   }
 
   /**
@@ -518,25 +550,19 @@ const TOC_THRESHOLD = 3;
 
 const HANGUL = /[ㄱ-힝]/;
 
-/**
- * A contents page, when there is a cover to follow and enough structure to
- * list. A memo gets none; a report gets one whether or not it asked, because
- * a reader deciding whether to read is what a contents page is for.
- */
-function wantsToc(document: MarkdownDocument): boolean {
-  const { cover, body } = splitCover(document.blocks);
-  const listable = body.filter(
-    (block) => block.kind === "heading" && block.level <= 2,
-  ).length;
-  return cover !== undefined && listable >= TOC_THRESHOLD;
-}
-
 function documentXml(document: MarkdownDocument, renderer: Renderer): string {
   const { cover, body } = splitCover(document.blocks);
   let out = cover ? renderer.cover(cover.title, cover.subtitle) : "";
-  if (cover && wantsToc(document)) {
+  // A contents page, when there is a cover to follow and enough structure to
+  // list. A memo gets none; a report gets one whether or not it asked, because
+  // a reader deciding whether to read is what a contents page is for.
+  const entries = body
+    .filter((block): block is Extract<Block, { kind: "heading" }> => block.kind === "heading")
+    .filter((block) => block.level <= 2)
+    .map((block) => ({ runs: block.runs, level: block.level }));
+  if (cover && entries.length >= TOC_THRESHOLD) {
     const korean = HANGUL.test(cover.title.map((run) => run.text).join(""));
-    out += renderer.tocPage(korean ? "목차" : "Contents");
+    out += renderer.tocPage(korean ? "목차" : "Contents", entries);
   }
   /** Whether a page break before the next chapter has anything to move past. */
   let rendered = cover !== undefined;
@@ -561,18 +587,6 @@ function documentXml(document: MarkdownDocument, renderer: Renderer): string {
     (cover ? "<w:titlePg/>" : "") +
     "</w:sectPr></w:body></w:document>"
   );
-}
-
-/**
- * `settings.xml`, present only when the document carries a `TOC` field.
- *
- * `updateFields` is what makes Word compute the table of contents on open —
- * this renderer does not paginate, so the page numbers a TOC wants are numbers
- * only Word can know. A document with no field to update carries no settings
- * part at all.
- */
-function settingsXml(): string {
-  return `<w:settings xmlns:w="${W}"><w:updateFields w:val="true"/></w:settings>`;
 }
 
 /** The running head: the document's name, quietly, on every page but the cover. */
@@ -676,7 +690,7 @@ const MEDIA_DEFAULTS: Record<string, string> = {
   jpg: "image/jpeg",
 };
 
-function contentTypesXml(mediaExtensions: readonly string[], settings: boolean): string {
+function contentTypesXml(mediaExtensions: readonly string[]): string {
   return (
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
@@ -684,9 +698,6 @@ function contentTypesXml(mediaExtensions: readonly string[], settings: boolean):
     mediaExtensions
       .map((extension) => `<Default Extension="${extension}" ContentType="${MEDIA_DEFAULTS[extension]}"/>`)
       .join("") +
-    (settings
-      ? '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
-      : "") +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' +
@@ -707,15 +718,12 @@ function packageRelsXml(): string {
   );
 }
 
-function documentRelsXml(rels: readonly DocRelationship[], settings: boolean): string {
+function documentRelsXml(rels: readonly DocRelationship[]): string {
   return (
     `<Relationships xmlns="${RELATIONSHIPS}">` +
     `<Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/>` +
     `<Relationship Id="${FOOTER_RELATIONSHIP}" Type="${R}/footer" Target="footer1.xml"/>` +
     `<Relationship Id="${HEADER_RELATIONSHIP}" Type="${R}/header" Target="header1.xml"/>` +
-    (settings
-      ? `<Relationship Id="${SETTINGS_RELATIONSHIP}" Type="${R}/settings" Target="settings.xml"/>`
-      : "") +
     rels
       .map((rel, index) =>
         rel.kind === "hyperlink"
@@ -752,21 +760,17 @@ export function renderDocx(document: MarkdownDocument, options: DocxOptions): Ui
   // Before the relationships and media parts: rendering is what discovers
   // the hyperlinks and the pictures.
   const body = documentXml(document, renderer);
-  const toc = wantsToc(document);
   const parts: Record<string, Uint8Array> = {
-    "[Content_Types].xml": part(contentTypesXml(renderer.mediaExtensions(), toc)),
+    "[Content_Types].xml": part(contentTypesXml(renderer.mediaExtensions())),
     "_rels/.rels": part(packageRelsXml()),
     "docProps/core.xml": part(corePropertiesXml(options.title, options.created)),
     "docProps/app.xml": part(appPropertiesXml()),
     "word/document.xml": part(body),
-    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships(), toc)),
+    "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships())),
     "word/styles.xml": part(stylesXml()),
     "word/footer1.xml": part(footerXml()),
     "word/header1.xml": part(headerXml(options.title)),
   };
-  if (toc) {
-    parts["word/settings.xml"] = part(settingsXml());
-  }
   for (const [file, bytes] of renderer.mediaParts()) {
     parts[`word/media/${file}`] = bytes;
   }

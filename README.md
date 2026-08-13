@@ -228,11 +228,15 @@ text extractor looks. A quote is a **callout** — the brand bar and the tint
 ground, the console's aside carried onto paper.
 
 **A report with a cover and three or more level 1-2 headings gets a contents
-page.** The TOC is a field whose result is left blank: this renderer does not
-paginate, so the page numbers a TOC wants are numbers only Word can know —
-`settings.xml` asks Word to update fields on open, which is how every
-generator that does not lay out pages ships a TOC. A document with less
-structure gets no contents page and no settings part.
+page** — without page numbers, which is the decision that makes it honest.
+Page numbers are the one thing about a TOC this renderer cannot know (text
+reflows to the reader's fonts), and asking Word to fill them in on open —
+`settings.xml`'s `updateFields`, the usual generator's answer — greets every
+reader with a dialog about fields referring to other files. A list of the
+headings with the numbers omitted (`TOC \n`) is one the renderer can finish
+itself: correct as written, nothing to update, no dialog. The field wrapper
+stays, so a reader who edits the headings can press F9 and have Word
+regenerate the list. A document with less structure gets no contents page.
 
 **Directives get a page treatment only when asked.** `:::metrics` becomes a
 key-figure strip — the numbers large in the brand colour, names beneath, a
