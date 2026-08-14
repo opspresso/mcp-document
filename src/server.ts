@@ -6,75 +6,23 @@
  * written a report has no way to hand it to a person in a form they can open.
  * This closes both gaps, and only those.
  *
- * The protocol is implemented directly rather than through an SDK, as in
- * `mcp-url-fetch`. The surface is four methods, and the one dependency that
- * mattered there — an SDK whose schema generation changed under a server
- * written against an older release — is exactly what broke the off-the-shelf
- * alternative.
+ * The protocol comes from `@modelcontextprotocol/server`, which serves **both
+ * eras from one endpoint**: a client that opens with `server/discover` gets
+ * revision `2026-07-28`, and one that opens with the `initialize` handshake is
+ * served statelessly as before. Why that replaced a hand-written protocol is in
+ * `mcp.ts`, beside the registration it replaced it with.
+ *
+ * What stays here is what the SDK has no opinion about: reading configuration,
+ * the health probe, the shared-secret gate, and the routing between them.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
 import { authorizes, describeAuth } from "./auth.js";
 import { ConfigError, loadConfig, type Config } from "./config.js";
-import { MAX_BODY_BYTES } from "./limits.js";
-import { callTool, TOOLS } from "./tools.js";
+import { buildServer } from "./mcp.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
-
-const PROTOCOL_VERSION = "2025-06-18";
-
-interface JsonRpcRequest {
-  jsonrpc: string;
-  id?: number | string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-async function handle(message: JsonRpcRequest): Promise<unknown> {
-  switch (message.method) {
-    case "initialize":
-      return {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      };
-    case "tools/list":
-      return { tools: TOOLS };
-    // Not gated behind a capability: ping is part of the base protocol and the
-    // receiver must answer it. A client using it as a keepalive reads an error
-    // here as a dead connection.
-    case "ping":
-      return {};
-    case "tools/call": {
-      const name = message.params?.name;
-      if (!TOOLS.some((tool) => tool.name === name)) {
-        throw new Error(`unknown tool: ${String(name)}`);
-      }
-      return callTool(name, (message.params?.arguments ?? {}) as Record<string, unknown>);
-    }
-    default:
-      throw new Error(`unsupported method: ${message.method}`);
-  }
-}
-
-/** Distinguished from a parse failure so the caller is not sent to debug its JSON. */
-class BodyTooLarge extends Error {}
-
-async function readBody(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += (chunk as Buffer).byteLength;
-    if (size > MAX_BODY_BYTES) {
-      throw new BodyTooLarge(
-        `request body is over the ${MAX_BODY_BYTES.toLocaleString("en-US")} byte limit — base64 ` +
-          "costs a third on top of the document's own bytes, so a larger document cannot be " +
-          "sent inline",
-      );
-    }
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
 
 function send(response: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -83,6 +31,9 @@ function send(response: ServerResponse, status: number, body: unknown): void {
 }
 
 function start(config: Config): void {
+  const mcp = toNodeHandler(
+    createMcpHandler(buildServer, { onerror: (error) => console.warn(`mcp: ${error.message}`) }),
+  );
   const server = createServer((request, response) => {
     void (async () => {
       // On the path alone: a probe or a proxy is free to append a query string,
@@ -104,59 +55,7 @@ function start(config: Config): void {
         });
         return;
       }
-      if (request.method === "DELETE") {
-        // Session teardown: this server is stateless, so there is nothing to release.
-        response.writeHead(204).end();
-        return;
-      }
-      if (request.method !== "POST") {
-        send(response, 405, { error: "method not allowed" });
-        return;
-      }
-      let body: string;
-      try {
-        body = await readBody(request);
-      } catch (error) {
-        const tooLarge = error instanceof BodyTooLarge;
-        send(response, tooLarge ? 413 : 400, {
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: -32600,
-            message: tooLarge ? error.message : "could not read the request body",
-          },
-        });
-        return;
-      }
-      let message: JsonRpcRequest;
-      try {
-        message = JSON.parse(body) as JsonRpcRequest;
-      } catch {
-        send(response, 400, {
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32700, message: "parse error" },
-        });
-        return;
-      }
-      // A notification carries no id and expects no reply.
-      if (message.id === undefined) {
-        response.writeHead(202).end();
-        return;
-      }
-      try {
-        send(response, 200, {
-          jsonrpc: "2.0",
-          id: message.id,
-          result: await handle(message),
-        });
-      } catch (error) {
-        send(response, 200, {
-          jsonrpc: "2.0",
-          id: message.id,
-          error: { code: -32601, message: (error as Error).message },
-        });
-      }
+      await mcp(request, response);
     })();
   });
 
