@@ -96,11 +96,12 @@ export const TOOLS = [
       "horizontal rules. A table column is set flush right with `---:` in the divider row and " +
       "centred with `:---:` — set columns of numbers right, or their digits do not line up. " +
       "Two lines with no blank line between them are one paragraph, as in " +
-      "Markdown. In docx the Markdown becomes a designed report: an opening `#` is a cover " +
-      "page with the first paragraph as its subtitle, every later `#` a numbered chapter on " +
-      "a fresh page, and a cover plus three or more `#`/`##` headings adds a contents page " +
-      "Word fills in on open. Block quotes are callout boxes; `:::metrics` renders a " +
-      "key-figure strip and `:::comparison` a two-column table. In pptx the Markdown " +
+      "Markdown. In docx, pdf and hwpx the Markdown becomes a designed report: an opening " +
+      "`#` is a cover page with the first paragraph as its subtitle, every later `#` a " +
+      "numbered chapter on a fresh page, and a cover plus three or more `#`/`##` headings " +
+      "adds a contents page listing them. Block quotes are callout boxes; in docx " +
+      "`:::metrics` renders a key-figure strip and `:::comparison` a two-column table. " +
+      "In pptx the Markdown " +
       "becomes a designed deck: an opening `#` is the cover and its first paragraph the " +
       "subtitle, every later `#` a numbered section divider, every `##` a slide. A slide " +
       "whose shape says what it is gets a matching layout — two to four `###`s with a short " +
