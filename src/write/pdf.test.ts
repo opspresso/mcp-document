@@ -81,6 +81,17 @@ test("what goes in comes back out", async () => {
   assert.match(text, /two/);
 });
 
+test("profiles change the rendered PDF without changing its text", async () => {
+  const document = parseMarkdown("# 보고서\n\n## 결론\n\n진행한다.");
+  const executive = await renderPdf(document, { title: "test", created: CREATED, profile: "executive" });
+  const formal = await renderPdf(document, { title: "test", created: CREATED, profile: "formal" });
+  assert.notDeepEqual(executive.bytes, formal.bytes);
+  assert.equal(
+    (await extractLines(executive.bytes)).replace(/\s+/g, " ").trim(),
+    (await extractLines(formal.bytes)).replace(/\s+/g, " ").trim(),
+  );
+});
+
 test("Korean survives, which is the whole reason a font is embedded", async () => {
   // With one of PDF's built-in fonts this comes back empty or as a row of
   // boxes: they encode Latin-1 and nothing else.

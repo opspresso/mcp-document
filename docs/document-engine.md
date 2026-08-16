@@ -8,6 +8,13 @@ The cover, the numbered chapters and the contents threshold are one decision
 (`write/semantics.ts`); what follows describes DOCX, and then where the other
 two differ.
 
+The selected design profile changes the page's visual register without changing
+that structure. It supplies the colours, cover-rule proportion and table-header
+treatment to all three renderers. `formal` and `technical` use light headers
+with dark text; the other profiles use a filled header. HWPX expresses the same
+decision through its `borderFill` and `charPr` tables rather than approximating
+it in the body.
+
 **An opening `#` is the cover**: the title oversized on its own page, the
 first paragraph under it as the subtitle, a brand rule above, and no running
 head or page number on it (`titlePg`). The cover title is `Heading1` with its
@@ -17,7 +24,7 @@ document that lost its title. **Every later `#` opens a chapter** on a fresh
 page, a large light-brand ordinal above the heading. **The running head**
 names the document on every page but the cover, in the header part where no
 text extractor looks. A quote is a **callout** — the brand bar and the tint
-ground, the console's aside carried onto paper.
+ground marking an editorial aside without interrupting the main text.
 
 **A report with a cover and three or more level 1-2 headings gets a contents
 page** — without page numbers, which is the decision that makes it honest.
@@ -52,9 +59,9 @@ is. **HWPX carries them too, conservatively**: the page break is the `hp:p`
 attribute 한글 itself writes, the cover and ordinal are two more entries in
 the `charPr`/`paraPr` tables the body already resolves against, and the
 contents list goes without page numbers, as the DOCX one does. The cover's
-brand rule is the one thing left out — a paragraph border box shortened by
-indent tricks is a shape this format's single reader has to get exactly right,
-and the composition carries without it.
+short brand rule is a bottom border on an empty paragraph whose right margin
+sets the profile length; it avoids introducing a drawing control solely for
+decoration.
 
 **Three of the devices above are DOCX's alone.** Neither of the other two
 writes a header part, so there is no running head in either. Neither gives

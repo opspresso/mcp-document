@@ -11,7 +11,7 @@
  */
 
 import type { Run } from "../../markdown.js";
-import { DECK, centiPoints, emu } from "../theme.js";
+import { DECK, LEADING, centiPoints, emu } from "../theme.js";
 import type { Piece } from "./types.js";
 
 /** EMU, which is what every DrawingML measurement is in: 914,400 to the inch. */
@@ -37,9 +37,6 @@ export const BODY_BOX = { y: 1714500, height: 4457700 };
  */
 export const COVER_TITLE_BOX = { y: 2209800, height: 1600200 };
 export const SUBTITLE_BOX = { y: 3886200, height: 914400 };
-
-/** The vertical brand band down the cover's left edge. */
-export const COVER_BAND_WIDTH = 274320;
 
 /**
  * A section divider: the ordinal above, the title below, a rule between.
@@ -141,7 +138,7 @@ export const TITLE_RULE = { width: emu(48), height: emu(3), gap: emu(6) };
 export const NUMBER_BOX = { width: emu(48), height: emu(16) };
 
 /** A line of body text, with the leading that goes with it. */
-export const LINE_HEIGHT = Math.round(((BODY_SIZE * 1.35) / 100) * EMU_PER_POINT);
+export const LINE_HEIGHT = Math.round(((BODY_SIZE * LEADING.deck.body) / 100) * EMU_PER_POINT);
 /** A table row, which is worth one and a half lines of prose. */
 export const ROW_HEIGHT = Math.round(LINE_HEIGHT * 1.5);
 

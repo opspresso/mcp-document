@@ -17,7 +17,15 @@
 import { escapeXml } from "../../xml.js";
 import type { Run } from "../../markdown.js";
 import { columnShares } from "../table.js";
-import { DECK, PALETTE, centiPoints } from "../theme.js";
+import {
+  DECK,
+  LEADING,
+  TYPOGRAPHY,
+  centiPoints,
+  designFor,
+  type DesignProfile,
+  type Palette,
+} from "../theme.js";
 import {
   ATTRIBUTION_BOX,
   BODY_BOX,
@@ -86,12 +94,6 @@ export interface MediaEntry {
   size: ImageSize;
 }
 
-const INK = PALETTE.ink;
-const LINK_COLOUR = PALETTE.brandDeep;
-const MUTED = PALETTE.inkMuted;
-const BORDER = PALETTE.rule;
-const HEADER_FILL = PALETTE.brand;
-
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
 /** How transparent a divider's ordinal is: present, but a mark rather than text. */
@@ -103,8 +105,6 @@ const METRIC_SIZE = centiPoints(DECK.metric);
 const METRIC_LABEL_SIZE = centiPoints(DECK.metricLabel);
 const QUOTE_SIZE = centiPoints(DECK.quote);
 
-/** A card's corner radius, as DrawingML's fraction of the shorter side. */
-const CARD_RADIUS = 8000;
 /** A chip is a pill: the radius maxes out at half the height. */
 const CHIP_RADIUS = 50000;
 
@@ -114,17 +114,18 @@ const CHIP_RADIUS = 50000;
 // which on a Japanese or English machine is not a Korean one.
 
 /** `sz` and the rest of `a:rPr`, for one run inside a paragraph of a given style. */
-function runProperties(run: Run, style: Style, linkId?: string): string {
+function runProperties(run: Run, style: Style, palette: Palette, linkId?: string): string {
   const bold = run.bold || style.bold;
   const italic = run.italic || style.italic;
   const mono = run.code || style.mono;
-  const colour = run.href ? LINK_COLOUR : (style.colour ?? INK);
+  const colour = run.href ? palette.brandDeep : (style.colour ?? palette.ink);
   const lang = HANGUL.test(run.text) ? "ko-KR" : "en-US";
   const fill = style.alpha
     ? `<a:srgbClr val="${colour}"><a:alpha val="${style.alpha}"/></a:srgbClr>`
     : `<a:srgbClr val="${colour}"/>`;
   return (
-    `<a:rPr lang="${lang}" sz="${style.size}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""}` +
+    `<a:rPr lang="${lang}" sz="${style.size}" kern="${centiPoints(TYPOGRAPHY.kerningFromPoints)}" ` +
+    `spc="${TYPOGRAPHY.tracking}"${bold ? ' b="1"' : ""}${italic ? ' i="1"' : ""}` +
     `${run.href ? ' u="sng"' : ""} dirty="0">` +
     `<a:solidFill>${fill}</a:solidFill>` +
     // Only the Latin face is named, and only for code. Naming a face for prose
@@ -138,11 +139,11 @@ function runProperties(run: Run, style: Style, linkId?: string): string {
 }
 
 /** `a:t`, with a newline inside a run becoming the break it was. */
-function runElement(run: Run, style: Style, linkId?: string): string {
+function runElement(run: Run, style: Style, palette: Palette, linkId?: string): string {
   return run.text
     .split("\n")
-    .map((line) => `<a:r>${runProperties(run, style, linkId)}<a:t>${escapeXml(line)}</a:t></a:r>`)
-    .join(`<a:br>${runProperties(run, style, linkId)}</a:br>`);
+    .map((line) => `<a:r>${runProperties(run, style, palette, linkId)}<a:t>${escapeXml(line)}</a:t></a:r>`)
+    .join(`<a:br>${runProperties(run, style, palette, linkId)}</a:br>`);
 }
 
 export class Renderer {
@@ -156,7 +157,10 @@ export class Renderer {
    * built by `index.ts` before any slide renders, so two slides showing the
    * same picture share one part.
    */
-  constructor(private readonly media: ReadonlyMap<string, MediaEntry> = new Map()) {}
+  constructor(
+    private readonly media: ReadonlyMap<string, MediaEntry> = new Map(),
+    private readonly design: DesignProfile = designFor(),
+  ) {}
 
   /** Start a slide, discarding the previous one's relationships and ids. */
   private reset(): void {
@@ -176,8 +180,10 @@ export class Renderer {
   private paragraph(runs: readonly Run[], style: Style): string {
     const marginLeft = style.indent * INDENT_EMU;
     const algn = style.align === "right" ? "r" : style.align === "center" ? "ctr" : "l";
+    const leading = Math.round((style.leading ?? LEADING.deck.body) * 100000);
     const properties =
       `<a:pPr marL="${marginLeft}" indent="0" algn="${algn}">` +
+      `<a:lnSpc><a:spcPct val="${leading}"/></a:lnSpc>` +
       (style.before ? `<a:spcBef><a:spcPts val="${style.before}"/></a:spcBef>` : "") +
       // Every list marker here is literal text, as in the other three renderers,
       // so PowerPoint's own bullet has to be turned off or every line gets two.
@@ -192,6 +198,7 @@ export class Renderer {
                 // The first run is the marker when the style says so — the one
                 // drop of brand a content line carries.
                 index === 0 && style.marker ? { ...style, colour: style.marker } : style,
+                this.design.palette,
                 run.href ? this.relationshipFor("hyperlink", run.href) : undefined,
               ),
             )
@@ -237,14 +244,18 @@ export class Renderer {
     // would have.
     const border = (edge: string): string =>
       `<a:${edge} w="12700" cap="flat" cmpd="sng" algn="ctr">` +
-      `<a:solidFill><a:srgbClr val="${BORDER}"/></a:solidFill>` +
+      `<a:solidFill><a:srgbClr val="${this.design.palette.rule}"/></a:solidFill>` +
       `<a:prstDash val="solid"/></a:${edge}>`;
     const noBorder = (edge: string): string => `<a:${edge}><a:noFill/></a:${edge}>`;
     const cell = (cells: readonly Run[][], column: number, row: number): string => {
       const header = row === 0;
       const runs = cells[column] ?? [];
       // Zebra counted from the header, so the first data row is the plain one.
-      const fill = header ? HEADER_FILL : row % 2 === 0 ? PALETTE.brandTint : undefined;
+      const fill = header
+        ? this.design.table.headerFill
+        : row % 2 === 0
+          ? this.design.palette.brandTint
+          : undefined;
       // A cell with no paragraph in it is what makes PowerPoint call the file
       // corrupt — the same trap `w:tc` has in DOCX.
       return (
@@ -252,7 +263,7 @@ export class Renderer {
         this.paragraph(runs, {
           ...BODY_STYLE,
           align: piece.align[column],
-          ...(header ? { bold: true, colour: PALETTE.onBrand } : {}),
+          ...(header ? { bold: true, colour: this.design.table.headerText } : {}),
         }) +
         "</a:txBody>" +
         '<a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">' +
@@ -342,7 +353,7 @@ export class Renderer {
       `<p:spPr><a:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
       `<a:ext cx="${TITLE_RULE.width}" cy="${TITLE_RULE.height}"/></a:xfrm>` +
       '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
-      `<a:solidFill><a:srgbClr val="${PALETTE.brand}"/></a:solidFill>` +
+      `<a:solidFill><a:srgbClr val="${this.design.palette.brand}"/></a:solidFill>` +
       "</p:spPr>" +
       // The empty body is not optional in practice. `p:txBody` is `minOccurs="0"`
       // in the schema, and PowerPoint still calls a `p:sp` without one damaged
@@ -499,9 +510,16 @@ export class Renderer {
     shapes: string[],
     decorations: string[],
   ): void {
-    shapes.push(this.titleShape(title, index, TITLE_BOX, { size: TITLE_SIZE, bold: true, indent: 0 }));
+    shapes.push(
+      this.titleShape(title, index, TITLE_BOX, {
+        size: TITLE_SIZE,
+        bold: true,
+        indent: 0,
+        leading: LEADING.deck.title,
+      }),
+    );
     decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
-    decorations.push(this.slideNumber(index + 1, MUTED));
+    decorations.push(this.slideNumber(index + 1, this.design.palette.inkMuted));
   }
 
   /** One slide, and the relationships it turned out to need. */
@@ -525,6 +543,7 @@ export class Renderer {
             size: COVER_TITLE_SIZE,
             bold: true,
             indent: 0,
+            leading: LEADING.deck.coverTitle,
           }),
         );
         if (slide.subtitle) {
@@ -532,7 +551,12 @@ export class Renderer {
             this.textShape(
               "Subtitle",
               { x: SIDE_MARGIN, y: SUBTITLE_BOX.y, width: CONTENT_WIDTH, height: SUBTITLE_BOX.height },
-              this.paragraph(slide.subtitle, { size: SUBTITLE_SIZE, colour: MUTED, indent: 0 }),
+              this.paragraph(slide.subtitle, {
+                size: SUBTITLE_SIZE,
+                colour: this.design.palette.inkMuted,
+                indent: 0,
+                leading: LEADING.deck.subtitle,
+              }),
               '<p:ph type="body" idx="1"/>',
             ),
           );
@@ -555,7 +579,7 @@ export class Renderer {
             this.paragraph([{ text: String(slide.ordinal).padStart(2, "0") }], {
               size: ORDINAL_SIZE,
               bold: true,
-              colour: PALETTE.onBrand,
+              colour: this.design.palette.onBrand,
               alpha: ORDINAL_ALPHA,
               indent: 0,
             }),
@@ -565,11 +589,12 @@ export class Renderer {
           this.titleShape(slide.title, index, SECTION_TITLE_BOX, {
             size: SECTION_TITLE_SIZE,
             bold: true,
-            colour: PALETTE.onBrand,
+            colour: this.design.palette.onBrand,
             indent: 0,
+            leading: LEADING.deck.title,
           }),
         );
-        decorations.push(this.slideNumber(index + 1, PALETTE.brandTint));
+        decorations.push(this.slideNumber(index + 1, this.design.palette.brandTint));
         break;
       }
 
@@ -580,6 +605,7 @@ export class Renderer {
             bold: true,
             indent: 0,
             align: "center",
+            leading: LEADING.deck.title,
           }),
         );
         // What follows the goodbye — a contact line, a link — is centred with
@@ -601,13 +627,13 @@ export class Renderer {
             this.paragraph(card.title, {
               size: CARD_TITLE_SIZE,
               bold: true,
-              colour: PALETTE.brand,
+              colour: this.design.palette.brand,
               indent: 0,
             }) +
             (card.body
               ? this.paragraph(card.body, {
                   size: CARD_BODY_SIZE,
-                  colour: MUTED,
+                  colour: this.design.palette.inkMuted,
                   indent: 0,
                   before: 600,
                 })
@@ -616,8 +642,8 @@ export class Renderer {
             this.roundedShape(
               `Card ${at + 1}`,
               { x: SIDE_MARGIN + at * (width + GRID_GAP), y: CARD_TOP, width, height: CARD_HEIGHT },
-              PALETTE.brandTint,
-              CARD_RADIUS,
+              this.design.palette.brandTint,
+              this.design.deck.cardRadius,
               paragraphs,
               { inset: CARD_INSET },
             ),
@@ -645,13 +671,13 @@ export class Renderer {
               this.paragraph([{ text: metric.value }], {
                 size: METRIC_SIZE,
                 bold: true,
-                colour: PALETTE.brand,
+                colour: this.design.palette.brand,
                 indent: 0,
                 align: "center",
               }) +
                 this.paragraph(metric.label, {
                   size: METRIC_LABEL_SIZE,
-                  colour: MUTED,
+                  colour: this.design.palette.inkMuted,
                   indent: 0,
                   align: "center",
                   before: 600,
@@ -688,7 +714,7 @@ export class Renderer {
               },
               this.paragraph(slide.attribution, {
                 size: METRIC_LABEL_SIZE,
-                colour: MUTED,
+                colour: this.design.palette.inkMuted,
                 indent: 0,
               }),
             ),
@@ -698,7 +724,7 @@ export class Renderer {
           this.decorShape(
             "rect",
             { x: SIDE_MARGIN, y: QUOTE_BOX.y, width: QUOTE_BAR_WIDTH, height: QUOTE_BOX.height },
-            PALETTE.brandLight,
+            this.design.palette.brandLight,
           ),
         );
         break;
@@ -714,8 +740,8 @@ export class Renderer {
             this.roundedShape(
               `Step ${at + 1}`,
               { x, y: PROCESS_NODE_TOP, width, height: PROCESS_NODE_HEIGHT },
-              PALETTE.brandTint,
-              CARD_RADIUS,
+              this.design.palette.brandTint,
+              this.design.deck.cardRadius,
               // One paragraph, with the author's number as its marker run: the
               // node extracts as "1. 접수 자동 분류", exactly the line that
               // went in.
@@ -723,7 +749,7 @@ export class Renderer {
                 size: CARD_BODY_SIZE,
                 indent: 0,
                 align: "center",
-                marker: PALETTE.brand,
+                marker: this.design.palette.brand,
               }),
               { inset: 137160, anchor: "ctr" },
             ),
@@ -738,7 +764,7 @@ export class Renderer {
                   width: PROCESS_ARROW.width,
                   height: PROCESS_ARROW.height,
                 },
-                PALETTE.brandLight,
+                this.design.palette.brandLight,
               ),
             );
           }
@@ -756,7 +782,7 @@ export class Renderer {
           this.decorShape(
             "rect",
             { x: SIDE_MARGIN, y: TIMELINE_LINE_Y, width: CONTENT_WIDTH, height: TIMELINE_LINE_HEIGHT },
-            PALETTE.rule,
+            this.design.palette.rule,
           ),
         );
         slide.milestones.forEach((milestone, at) => {
@@ -768,7 +794,7 @@ export class Renderer {
               this.paragraph([{ text: milestone.when }], {
                 size: CARD_TITLE_SIZE,
                 bold: true,
-                colour: PALETTE.brand,
+                colour: this.design.palette.brand,
                 indent: 0,
                 align: "center",
               }),
@@ -780,7 +806,7 @@ export class Renderer {
               { x, y: TIMELINE_WHAT_BOX.y, width: cell, height: TIMELINE_WHAT_BOX.height },
               this.paragraph(milestone.what, {
                 size: CARD_BODY_SIZE,
-                colour: MUTED,
+                colour: this.design.palette.inkMuted,
                 indent: 0,
                 align: "center",
               }),
@@ -795,7 +821,7 @@ export class Renderer {
                 width: TIMELINE_DOT,
                 height: TIMELINE_DOT,
               },
-              PALETTE.brand,
+              this.design.palette.brand,
             ),
           );
         });
@@ -811,12 +837,12 @@ export class Renderer {
             this.roundedShape(
               `Column ${at + 1}`,
               { x, y: BODY_BOX.y, width, height: CHIP_HEIGHT },
-              PALETTE.brand,
+              this.design.palette.brand,
               CHIP_RADIUS,
               this.paragraph(column.title, {
                 size: BODY_SIZE,
                 bold: true,
-                colour: PALETTE.onBrand,
+                colour: this.design.palette.onBrand,
                 indent: 0,
                 align: "center",
               }),
@@ -838,7 +864,7 @@ export class Renderer {
                     size: BODY_SIZE,
                     indent: 0,
                     before: 300,
-                    ...(line.bullet ? { marker: PALETTE.brandLight } : {}),
+                    ...(line.bullet ? { marker: this.design.palette.brandLight } : {}),
                   }),
                 )
                 .join(""),
@@ -865,7 +891,7 @@ export class Renderer {
             },
             this.paragraph(slide.caption, {
               size: centiPoints(DECK.caption),
-              colour: MUTED,
+              colour: this.design.palette.inkMuted,
               indent: 0,
               align: "center",
             }),
@@ -881,6 +907,7 @@ export class Renderer {
               size: TITLE_SIZE,
               bold: true,
               indent: 0,
+              leading: LEADING.deck.title,
             }),
           );
           // The one brand mark a content slide carries itself: the layout
@@ -888,7 +915,7 @@ export class Renderer {
           decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
         }
         this.stack(shapes, slide.pieces, BODY_BOX.y);
-        decorations.push(this.slideNumber(index + 1, MUTED));
+        decorations.push(this.slideNumber(index + 1, this.design.palette.inkMuted));
         break;
       }
     }

@@ -40,6 +40,7 @@ import { extensionOf, imageSize, type ImageAsset } from "../image.js";
 import { plan } from "./planner.js";
 import { Renderer, type MediaEntry } from "./render.js";
 import type { Slide } from "./types.js";
+import { designFor, type DocumentProfile } from "../theme.js";
 
 /**
  * Which layout part carries each archetype's design.
@@ -66,6 +67,7 @@ export interface PptxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
+  profile?: DocumentProfile;
   /** Keyed by the name `asset://name` references. */
   assets?: Record<string, ImageAsset>;
 }
@@ -77,7 +79,8 @@ export interface RenderedPptx {
 }
 
 export function renderPptx(document: MarkdownDocument, options: PptxOptions): RenderedPptx {
-  const { slides } = plan(document);
+  const design = designFor(options.profile);
+  const { slides } = plan(document, design);
 
   /**
    * One media part per referenced asset, numbered in first-use order. A
@@ -104,7 +107,7 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
   }
   const extensions = [...new Set([...media.keys()].map((name) => extensionOf(assets[name]!.mimeType)))];
 
-  const renderer = new Renderer(media);
+  const renderer = new Renderer(media, design);
   const parts: Record<string, Uint8Array> = {
     "[Content_Types].xml": part(contentTypesXml(slides.length, extensions)),
     "_rels/.rels": part(packageRelsXml()),
@@ -112,17 +115,17 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     "docProps/app.xml": part(appPropertiesXml()),
     "ppt/presentation.xml": part(presentationXml(slides.length)),
     "ppt/_rels/presentation.xml.rels": part(presentationRelsXml(slides.length)),
-    "ppt/theme/theme1.xml": part(themeXml()),
+    "ppt/theme/theme1.xml": part(themeXml(design)),
     "ppt/presProps.xml": part(presPropsXml()),
     "ppt/viewProps.xml": part(viewPropsXml()),
     "ppt/tableStyles.xml": part(tableStylesXml()),
-    "ppt/slideMasters/slideMaster1.xml": part(slideMasterXml()),
+    "ppt/slideMasters/slideMaster1.xml": part(slideMasterXml(design)),
     "ppt/slideMasters/_rels/slideMaster1.xml.rels": part(slideMasterRelsXml()),
   };
 
   for (let layout = 1; layout <= LAYOUT_COUNT; layout += 1) {
     parts[`ppt/slideLayouts/slideLayout${layout}.xml`] = part(
-      slideLayoutXml(layout as LayoutIndex, options.title),
+      slideLayoutXml(layout as LayoutIndex, options.title, design),
     );
     parts[`ppt/slideLayouts/_rels/slideLayout${layout}.xml.rels`] = part(slideLayoutRelsXml());
   }

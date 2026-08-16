@@ -32,7 +32,7 @@
 
 import type { Block, MarkdownDocument, Run } from "../../markdown.js";
 import { plainTextOf } from "../../markdown.js";
-import { PALETTE } from "../theme.js";
+import { designFor, type DesignProfile } from "../theme.js";
 import { figureOf, forceSemantic, recognise, type Semantic } from "../semantics.js";
 import {
   BODY_LINES,
@@ -61,7 +61,7 @@ const CLOSING_TITLE = /^(감사합니다|고맙습니다|thank\s*you|thanks|q\s*
 
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 
-function piecesOf(block: Block): Piece[] {
+function piecesOf(block: Block, design: DesignProfile): Piece[] {
   switch (block.kind) {
     case "heading":
       // Levels 1 and 2 opened a slide and never reach here; 3 to 6 are set as
@@ -76,7 +76,7 @@ function piecesOf(block: Block): Piece[] {
           style: {
             size: SUBHEADING_SIZES[Math.min(block.level, 6) - 3] ?? BODY_SIZE,
             bold: true,
-            colour: PALETTE.brand,
+            colour: design.palette.brand,
             indent: 0,
             before: 600,
           },
@@ -97,7 +97,7 @@ function piecesOf(block: Block): Piece[] {
         return {
           kind: "text",
           runs: [{ text: marker }, ...item.runs],
-          style: { size: BODY_SIZE, indent: item.depth + 1, marker: PALETTE.brandLight },
+          style: { size: BODY_SIZE, indent: item.depth + 1, marker: design.palette.brandLight },
         };
       });
     }
@@ -112,7 +112,7 @@ function piecesOf(block: Block): Piece[] {
         {
           kind: "text",
           runs: block.runs,
-          style: { size: BODY_SIZE, italic: true, colour: PALETTE.inkMuted, indent: 1 },
+          style: { size: BODY_SIZE, italic: true, colour: design.palette.inkMuted, indent: 1 },
         },
       ];
     case "table":
@@ -121,11 +121,17 @@ function piecesOf(block: Block): Piece[] {
       // A drawn line would be a shape of its own in the middle of a text box,
       // which is a second layout problem for a mark this small. The same row of
       // dashes `write/hwpx.ts` settles for.
-      return [{ kind: "text", runs: [{ text: "─".repeat(30) }], style: { size: BODY_SIZE, colour: PALETTE.rule, indent: 0 } }];
+      return [
+        {
+          kind: "text",
+          runs: [{ text: "─".repeat(30) }],
+          style: { size: BODY_SIZE, colour: design.palette.rule, indent: 0 },
+        },
+      ];
     case "directive":
       // On a slide that is not the archetype it asked for, a directive's
       // contents stand where it stood — same rule as the page renderers.
-      return block.blocks.flatMap(piecesOf);
+      return block.blocks.flatMap((inner) => piecesOf(inner, design));
   }
 }
 
@@ -259,8 +265,12 @@ function sectionsOf(document: MarkdownDocument): Section[] {
  * title. Only a continuation that starts mid-flow falls back to `(계속)`,
  * which tells the reader the break was mechanical rather than meant.
  */
-function contentSlides(title: Run[] | undefined, blocks: readonly Block[]): Slide[] {
-  const pages = pack(blocks.flatMap(piecesOf), BODY_LINES);
+function contentSlides(
+  title: Run[] | undefined,
+  blocks: readonly Block[],
+  design: DesignProfile,
+): Slide[] {
+  const pages = pack(blocks.flatMap((block) => piecesOf(block, design)), BODY_LINES);
   if (pages.length === 0) {
     return title ? [{ type: "content", title, pieces: [] }] : [];
   }
@@ -312,7 +322,7 @@ function closes(section: Section, last: boolean): boolean {
   );
 }
 
-export function plan(document: MarkdownDocument): Presentation {
+export function plan(document: MarkdownDocument, design: DesignProfile = designFor()): Presentation {
   const sections = sectionsOf(document);
   const slides: Slide[] = [];
   let ordinal = 0;
@@ -332,14 +342,14 @@ export function plan(document: MarkdownDocument): Presentation {
         title: section.title ?? [],
         ...(subtitle ? { subtitle } : {}),
       });
-      slides.push(...contentSlides(undefined, carried));
+      slides.push(...contentSlides(undefined, carried, design));
       return;
     }
 
     if (closes(section, last)) {
       // The closing holds what fits under its centred title; a closing slide
       // with more to say than that is a content section that ends the deck.
-      const pieces = section.blocks.flatMap(piecesOf);
+      const pieces = section.blocks.flatMap((block) => piecesOf(block, design));
       const pages = pack(pieces, CLOSING_LINES);
       if (pages.length <= 1) {
         slides.push({ type: "closing", title: section.title ?? [], pieces: pages[0] ?? [] });
@@ -351,7 +361,7 @@ export function plan(document: MarkdownDocument): Presentation {
       ordinal += 1;
       slides.push({ type: "section", title: section.title ?? [], ordinal });
       if (section.blocks.length > 0) {
-        slides.push(...contentSlides(section.title, section.blocks));
+        slides.push(...contentSlides(section.title, section.blocks, design));
       }
       return;
     }
@@ -380,7 +390,7 @@ export function plan(document: MarkdownDocument): Presentation {
       slides.push(slideOf(recognised, section.title));
       return;
     }
-    slides.push(...contentSlides(section.title, section.blocks));
+    slides.push(...contentSlides(section.title, section.blocks, design));
   });
 
   return { slides: slides.length > 0 ? slides : [{ type: "content", pieces: [] }] };

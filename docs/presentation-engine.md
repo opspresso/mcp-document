@@ -5,6 +5,19 @@ type: it reads the Markdown's structure and plans a deck from it. The pipeline
 is planner → presentation AST → renderer, and the planner's first decision is
 what each section *is*.
 
+The design profile then decides how that archetype speaks. All profiles keep
+the same geometry budget and editable native objects, but carry different
+palette, cover-band proportion, table contrast and corner discipline. A formal
+deck therefore stays square and print-like, a consulting deck takes a stronger
+cover accent, and a technical deck uses the restrained teal system without
+changing the slide plan or extracted text.
+
+The body, title and cover roles also state their own line spacing in DrawingML
+rather than inheriting a PowerPoint installation's default. The planner packs
+body lines at the same 1.35 ratio the renderer writes, so its overflow budget
+and the opened slide agree. Tracking remains neutral and native kerning starts
+at 12pt; text is never squeezed to rescue an overfilled slide.
+
 **Heading levels are the deck's skeleton.** A `#` that opens the document is
 the cover, and its first paragraph becomes the subtitle — everything else moves
 past the cover, because a list on a title page is a list that belongs on the

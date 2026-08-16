@@ -10,7 +10,21 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { CHART, PALETTE, centiPoints, emu, halfPoints, hashed, rgbOf, twips } from "./theme.js";
+import {
+  CHART,
+  DEFAULT_PROFILE,
+  DOCUMENT_PROFILES,
+  LEADING,
+  PALETTE,
+  TYPOGRAPHY,
+  centiPoints,
+  designFor,
+  emu,
+  halfPoints,
+  hashed,
+  rgbOf,
+  twips,
+} from "./theme.js";
 
 /** WCAG's relative luminance, which is not the same as perceived lightness. */
 function luminance(hex: string): number {
@@ -70,14 +84,60 @@ test("every categorical chart colour is distinguishable from the page", () => {
   }
 });
 
+test("the five document profiles are explicit and executive is the default", () => {
+  assert.deepEqual(DOCUMENT_PROFILES, ["executive", "consulting", "formal", "technical", "standard"]);
+  assert.equal(DEFAULT_PROFILE, "executive");
+  assert.equal(PALETTE, designFor(DEFAULT_PROFILE).palette);
+});
+
+test("every profile keeps its text legible and carries a distinct visual system", () => {
+  const brands = new Set<string>();
+  for (const profile of DOCUMENT_PROFILES) {
+    const design = designFor(profile);
+    brands.add(design.palette.brand);
+    assert.ok(contrast(design.palette.onBrand, design.palette.brand) >= AA);
+    assert.ok(contrast(design.table.headerText, design.table.headerFill) >= AA);
+    assert.ok(contrast(design.palette.ink, design.palette.surfaceTint) >= AA);
+    assert.ok(design.deck.coverBandPoints >= 0 && design.deck.coverBandPoints <= 36);
+    assert.ok(design.doc.coverRulePoints >= 36 && design.doc.coverRulePoints <= 72);
+  }
+  assert.equal(brands.size, DOCUMENT_PROFILES.length);
+});
+
+test("formal and technical profiles use restrained light table headers", () => {
+  for (const profile of ["formal", "technical"] as const) {
+    const design = designFor(profile);
+    assert.equal(design.table.headerFill, design.palette.brandTint);
+    assert.equal(design.table.headerText, design.palette.brand);
+  }
+});
+
+test("typography keeps prose readable and display lines compact", () => {
+  assert.deepEqual(LEADING.document, {
+    body: 1.5,
+    heading: 1.2,
+    coverTitle: 1.15,
+    subtitle: 1.4,
+    compact: 1.35,
+  });
+  assert.deepEqual(LEADING.deck, {
+    body: 1.35,
+    title: 1.15,
+    coverTitle: 1.1,
+    subtitle: 1.3,
+  });
+  assert.equal(TYPOGRAPHY.tracking, 0);
+  assert.equal(TYPOGRAPHY.kerningFromPoints, 12);
+});
+
 test("a colour is one value, whatever form it is asked for", () => {
   assert.equal(hashed("brand"), `#${PALETTE.brand}`);
   const { r, g, b } = rgbOf("onBrand");
   assert.deepEqual([r, g, b], [1, 1, 1]);
   assert.deepEqual(rgbOf("ink"), {
-    r: 0x21 / 255,
-    g: 0x25 / 255,
-    b: 0x29 / 255,
+    r: parseInt(PALETTE.ink.slice(0, 2), 16) / 255,
+    g: parseInt(PALETTE.ink.slice(2, 4), 16) / 255,
+    b: parseInt(PALETTE.ink.slice(4, 6), 16) / 255,
   });
 });
 

@@ -5,7 +5,7 @@ An MCP server that parses office documents and writes them.
 | Tool | Takes | Returns |
 |---|---|---|
 | `read_document(content, filename?)` | DOCX, PPTX, XLSX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as an MCP `text` block |
-| `render_document(format, content, title?, filename?, assets?)` | Markdown → `docx` `pptx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
+| `render_document(format, content, profile?, title?, filename?, assets?)` | Markdown → `docx` `pptx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
 
 It exists because a document is not its text, and a report is not a file. An
 agent handed a `.hwp` or a `.docx` cannot open it — the format is a container it

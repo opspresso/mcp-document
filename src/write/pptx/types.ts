@@ -28,6 +28,8 @@ export interface Style {
   indent: number;
   /** Space above, in hundredths of a point. */
   before?: number;
+  /** Line spacing as a multiplier of the font size. */
+  leading?: number;
   /** Table cells and the closing slide set this; body text is flush left. */
   align?: Align;
 }

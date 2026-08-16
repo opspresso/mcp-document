@@ -50,7 +50,16 @@ import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { plainTextOf } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { HANGUL, TOC_THRESHOLD, coverOf, tocEntriesOf } from "./semantics.js";
-import { DOC, rgbOf, type ColourName } from "./theme.js";
+import {
+  DOC,
+  LEADING,
+  designFor,
+  rgbOf,
+  type ColourName,
+  type DesignProfile,
+  type DocumentProfile,
+  type Palette,
+} from "./theme.js";
 import { PRODUCER } from "../version.js";
 
 /** A4 in points, and a 2cm margin. */
@@ -63,26 +72,49 @@ const BODY_SIZE = DOC.body;
 const CODE_SIZE = DOC.code;
 const CAPTION_SIZE = DOC.caption;
 const HEADING_SIZES = DOC.headings;
-const LINE_RATIO = 1.5;
 /** Space above a heading, as a multiple of its own size. */
 const HEADING_SPACE_ABOVE = 0.8;
 const PARAGRAPH_SPACE = 6;
 const INDENT_STEP = 18;
 
 /** The shared palette, in the three floats `pdf-lib` wants. */
-function ink(name: ColourName): RGB {
-  const { r, g, b } = rgbOf(name);
+function ink(name: ColourName, palette: Palette): RGB {
+  const { r, g, b } = rgbOf(name, palette);
   return rgb(r, g, b);
 }
 
-const INK = ink("ink");
-const LINK_COLOUR = ink("brandDeep");
-const MUTED = ink("inkMuted");
-const RULE_COLOUR = ink("rule");
-const BRAND = ink("brand");
-const BRAND_LIGHT = ink("brandLight");
-const ON_BRAND = ink("onBrand");
-const TINT = ink("brandTint");
+interface PdfColours {
+  ink: RGB;
+  link: RGB;
+  muted: RGB;
+  rule: RGB;
+  brand: RGB;
+  brandLight: RGB;
+  tableHeader: RGB;
+  tableHeaderText: RGB;
+  tint: RGB;
+}
+
+function coloursFor(design: DesignProfile): PdfColours {
+  const colour = (name: ColourName): RGB => ink(name, design.palette);
+  const rgbHex = (hex: string): RGB =>
+    rgb(
+      parseInt(hex.slice(0, 2), 16) / 255,
+      parseInt(hex.slice(2, 4), 16) / 255,
+      parseInt(hex.slice(4, 6), 16) / 255,
+    );
+  return {
+    ink: colour("ink"),
+    link: colour("brandDeep"),
+    muted: colour("inkMuted"),
+    rule: colour("rule"),
+    brand: colour("brand"),
+    brandLight: colour("brandLight"),
+    tableHeader: rgbHex(design.table.headerFill),
+    tableHeaderText: rgbHex(design.table.headerText),
+    tint: colour("brandTint"),
+  };
+}
 
 /**
  * Scripts that break between any two characters.
@@ -139,11 +171,11 @@ function fontFor(fonts: Fonts, run: Run): PDFFont {
  * whatever the run says. A link keeps its own colour even there — losing the
  * only signal that it is clickable would be the worse trade.
  */
-function colourFor(run: Run, override?: RGB): RGB {
+function colourFor(run: Run, colours: PdfColours, override?: RGB): RGB {
   if (run.href) {
-    return override ?? LINK_COLOUR;
+    return override ?? colours.link;
   }
-  return override ?? INK;
+  return override ?? colours.ink;
 }
 
 /** Split a run into the smallest pieces a line may break between. */
@@ -211,11 +243,14 @@ class Writer {
   private tocPage?: PDFPage;
   /** Level 1-2 headings in body order, with the page each landed on. */
   private readonly headings: { text: string; level: number; page: number }[] = [];
+  private readonly colours: PdfColours;
 
   constructor(
     private readonly document: PDFDocument,
     private readonly fonts: Fonts,
+    private readonly design: DesignProfile = designFor(),
   ) {
+    this.colours = coloursFor(design);
     this.page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     this.y = PAGE_HEIGHT - MARGIN;
   }
@@ -248,7 +283,7 @@ class Writer {
         y: MARGIN * 0.55,
         size: CAPTION_SIZE,
         font: this.fonts.regular,
-        color: MUTED,
+        color: this.colours.muted,
       });
     }
   }
@@ -266,11 +301,22 @@ class Writer {
    */
   cover(title: readonly Run[], subtitle: readonly Run[] | undefined): void {
     this.y = PAGE_HEIGHT - 280;
-    this.page.drawRectangle({ x: MARGIN, y: this.y, width: 60, height: 3, color: BRAND });
+    this.page.drawRectangle({
+      x: MARGIN,
+      y: this.y,
+      width: this.design.doc.coverRulePoints,
+      height: 3,
+      color: this.colours.brand,
+    });
     this.y -= 20;
     this.paragraph(
       title.map((run) => ({ ...run, bold: true })),
-      { size: DOC.coverTitle, left: MARGIN, width: CONTENT_WIDTH },
+      {
+        size: DOC.coverTitle,
+        left: MARGIN,
+        width: CONTENT_WIDTH,
+        leading: LEADING.document.coverTitle,
+      },
     );
     if (subtitle) {
       this.space(10);
@@ -278,7 +324,8 @@ class Writer {
         size: DOC.subtitle,
         left: MARGIN,
         width: CONTENT_WIDTH,
-        colour: MUTED,
+        colour: this.colours.muted,
+        leading: LEADING.document.subtitle,
       });
     }
   }
@@ -304,7 +351,7 @@ class Writer {
       y: this.y,
       size: DOC.ordinal,
       font: this.fonts.bold,
-      color: BRAND_LIGHT,
+      color: this.colours.brandLight,
     });
   }
 
@@ -324,20 +371,20 @@ class Writer {
     this.y = PAGE_HEIGHT - MARGIN;
 
     const labelSize = HEADING_SIZES[0]!;
-    this.y -= labelSize * LINE_RATIO;
+    this.y -= labelSize * LEADING.document.heading;
     this.page.drawText(label, {
       x: MARGIN,
       y: this.y + labelSize * 0.3,
       size: labelSize,
       font: this.fonts.bold,
-      color: BRAND,
+      color: this.colours.brand,
     });
     this.y -= 4;
     this.page.drawLine({
       start: { x: MARGIN, y: this.y },
       end: { x: PAGE_WIDTH - MARGIN, y: this.y },
       thickness: 0.75,
-      color: BRAND_LIGHT,
+      color: this.colours.brandLight,
     });
     this.y -= 10;
 
@@ -364,14 +411,14 @@ class Writer {
         y: baseline,
         size: BODY_SIZE,
         font,
-        color: entry.level === 1 ? INK : MUTED,
+        color: entry.level === 1 ? this.colours.ink : this.colours.muted,
       });
       this.page.drawText(number, {
         x: PAGE_WIDTH - MARGIN - numberWidth,
         y: baseline,
         size: BODY_SIZE,
         font: this.fonts.regular,
-        color: MUTED,
+        color: this.colours.muted,
       });
     }
 
@@ -443,7 +490,7 @@ class Writer {
         start: { x: linkFrom, y: baseline - size * 0.12 },
         end: { x: to, y: baseline - size * 0.12 },
         thickness: 0.5,
-        color: LINK_COLOUR,
+        color: this.colours.link,
       });
       this.annotate(linkHref, linkFrom, baseline - size * 0.2, to - linkFrom, size);
       linkFrom = undefined;
@@ -464,7 +511,7 @@ class Writer {
           y: baseline,
           size,
           font: fontFor(this.fonts, atom.run),
-          color: colourFor(atom.run, colour),
+          color: colourFor(atom.run, this.colours, colour),
           // Nanum Gothic has no italic face; shearing the glyphs is what stands
           // in for one.
           ...(atom.run.italic ? { xSkew: degrees(12) } : {}),
@@ -484,6 +531,7 @@ class Writer {
       width: number;
       firstLinePrefix?: Atom[];
       colour?: RGB;
+      leading?: number;
     },
   ): void {
     const { size, left, width } = options;
@@ -492,7 +540,7 @@ class Writer {
       ...runs.flatMap((run) => atomsOf(run, this.fonts, size)),
     ];
     const lines = wrap(atoms, width);
-    const height = size * LINE_RATIO;
+    const height = size * (options.leading ?? LEADING.document.body);
     for (const line of lines.length > 0 ? lines : [{ atoms: [], width: 0 }]) {
       this.reserve(height);
       // The baseline sits above the descender, not on the line's bottom edge.
@@ -506,7 +554,7 @@ class Writer {
     // halfway down reads as a rendering fault rather than as a choice.
     const monospaced = lines.every((line) => LATIN1_ONLY.test(line));
     const font = monospaced ? this.fonts.mono : this.fonts.regular;
-    const height = CODE_SIZE * 1.35;
+    const height = CODE_SIZE * LEADING.document.compact;
     this.space(PARAGRAPH_SPACE);
     for (const line of lines) {
       this.reserve(height);
@@ -515,7 +563,7 @@ class Writer {
         y: this.y,
         width: CONTENT_WIDTH,
         height,
-        color: TINT,
+        color: this.colours.tint,
       });
       // Cut rather than wrapped: a wrapped line of code is a line of code that
       // says something different, and there is no continuation marker in a PDF
@@ -529,7 +577,7 @@ class Writer {
         y: this.y + height * 0.28,
         size: CODE_SIZE,
         font,
-        color: INK,
+        color: this.colours.ink,
       });
     }
     this.space(PARAGRAPH_SPACE);
@@ -549,12 +597,17 @@ class Writer {
           widths[column]! - 10,
         );
       });
-      const height = Math.max(1, ...laid.map((lines) => lines.length)) * BODY_SIZE * 1.35 + 6;
+      const lineHeight = BODY_SIZE * LEADING.document.compact;
+      const height = Math.max(1, ...laid.map((lines) => lines.length)) * lineHeight + 6;
       this.reserve(height);
       // One fill per row, not one box per cell. A full grid boxes every number
       // in; the eye reads a table by its rows, and the column gaps are already
       // doing what the vertical lines would.
-      const fill = header ? BRAND : index % 2 === 0 ? TINT : undefined;
+      const fill = header
+        ? this.colours.tableHeader
+        : index % 2 === 0
+          ? this.colours.tint
+          : undefined;
       if (fill) {
         this.page.drawRectangle({
           x: MARGIN,
@@ -568,7 +621,7 @@ class Writer {
         start: { x: MARGIN, y: this.y },
         end: { x: MARGIN + CONTENT_WIDTH, y: this.y },
         thickness: 0.5,
-        color: RULE_COLOUR,
+        color: this.colours.rule,
       });
       let x = MARGIN;
       laid.forEach((lines, column) => {
@@ -587,8 +640,8 @@ class Writer {
             line,
             left,
             BODY_SIZE,
-            this.y + height - 4 - (lineIndex + 1) * BODY_SIZE * 1.35 + BODY_SIZE * 0.35,
-            header ? ON_BRAND : undefined,
+            this.y + height - 4 - (lineIndex + 1) * lineHeight + BODY_SIZE * 0.35,
+            header ? this.colours.tableHeaderText : undefined,
           );
         });
         x += width;
@@ -604,7 +657,13 @@ class Writer {
         this.space(size * HEADING_SPACE_ABOVE);
         this.paragraph(
           block.runs.map((run) => ({ ...run, bold: true })),
-          { size, left: MARGIN, width: CONTENT_WIDTH, colour: BRAND },
+          {
+            size,
+            left: MARGIN,
+            width: CONTENT_WIDTH,
+            colour: this.colours.brand,
+            leading: LEADING.document.heading,
+          },
         );
         // Recorded after the draw, when the page it landed on is a fact.
         if (block.level <= 2) {
@@ -624,7 +683,7 @@ class Writer {
             start: { x: MARGIN, y: this.y },
             end: { x: PAGE_WIDTH - MARGIN, y: this.y },
             thickness: 0.75,
-            color: BRAND_LIGHT,
+            color: this.colours.brandLight,
           });
         }
         this.space(2);
@@ -664,7 +723,7 @@ class Writer {
             size: BODY_SIZE,
             left: MARGIN + INDENT_STEP,
             width: CONTENT_WIDTH - INDENT_STEP,
-            colour: MUTED,
+            colour: this.colours.muted,
           },
         );
         // Only when the quote stayed on one page: a bar drawn from a `top` that
@@ -675,7 +734,7 @@ class Writer {
             y: this.y,
             width: 2,
             height: top - this.y,
-            color: BRAND_LIGHT,
+            color: this.colours.brandLight,
           });
         }
         this.space(PARAGRAPH_SPACE);
@@ -691,7 +750,7 @@ class Writer {
           start: { x: MARGIN, y: this.y },
           end: { x: PAGE_WIDTH - MARGIN, y: this.y },
           thickness: 0.5,
-          color: RULE_COLOUR,
+          color: this.colours.rule,
         });
         this.space(PARAGRAPH_SPACE);
         return;
@@ -715,6 +774,7 @@ export interface PdfOptions {
   title: string;
   /** Passed in rather than read from the clock, so the bytes follow from the input. */
   created: Date;
+  profile?: DocumentProfile;
 }
 
 export interface RenderedPdf {
@@ -767,7 +827,7 @@ export async function renderPdf(
   const { cover, body } = coverOf(document.blocks);
   const toc = cover !== undefined && tocEntriesOf(body).length >= TOC_THRESHOLD;
 
-  const writer = new Writer(pdf, fonts);
+  const writer = new Writer(pdf, fonts, designFor(options.profile));
   if (cover) {
     writer.cover(cover.title, cover.subtitle);
     if (toc) {

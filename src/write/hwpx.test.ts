@@ -79,6 +79,34 @@ test("a table round-trips, and every cell holds a paragraph", () => {
   assert.match(section, /<hp:cellAddr colAddr="1" rowAddr="1"\/>/);
 });
 
+test("a formal profile carries its light table treatment into the HWPX header", () => {
+  const bytes = renderHwpx(parseMarkdown("| 이름 | 값 |\n|---|---:|\n| 처리량 | 42 |"), {
+    ...OPTIONS,
+    profile: "formal",
+  });
+  const header = partOf(bytes, "Contents/header.xml");
+  assert.ok(header.includes('faceColor="#EDF1F4"'));
+  assert.ok(header.includes('textColor="#334E68"'));
+});
+
+test("body, headings and cover use role-based leading with native kerning", () => {
+  const bytes = build("# 여러 줄 표지 제목\n\n부제\n\n## 여러 줄 본문 제목\n\n본문");
+  const header = partOf(bytes, "Contents/header.xml");
+  assert.ok(header.includes('useFontSpace="0" useKerning="1"'));
+  for (const leading of [150, 120, 115, 140, 135]) {
+    assert.ok(header.includes(`<hh:lineSpacing type="PERCENT" value="${leading}" unit="HWPUNIT"/>`));
+  }
+});
+
+test("the HWPX cover carries the same short profile rule as the other page formats", () => {
+  const bytes = build("# 표지 제목\n\n부제");
+  const header = partOf(bytes, "Contents/header.xml");
+  const section = partOf(bytes, "Contents/section0.xml");
+  assert.ok(header.includes('width="1.0 mm" color="#17324D"'));
+  assert.ok(header.includes('<hc:right value="43390" unit="HWPUNIT"/>'));
+  assert.match(section, /<hp:p[^>]*paraPrIDRef="\d+"[^>]*><hp:run[^>]*><hp:secPr[\s\S]*?<hp:t><\/hp:t><\/hp:run>/);
+});
+
 test("every id a paragraph or run refers to exists in the header", () => {
   // The reference that does not resolve is the failure mode of this format:
   // nothing in the body says what a style is, only which numbered one it wants.

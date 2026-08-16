@@ -4,7 +4,7 @@
     npm run dev          # tsx, no build step
     npm run typecheck
     npm test             # node --test, no test framework
-    npm run demo         # the two demo sources into build/, in all four formats
+    npm run demo         # the two demo sources, plus all profiles under build/profiles/
     npm run build        # tsc -p tsconfig.build.json (tests excluded from dist)
     npm start            # node dist/server.js, after a build
 

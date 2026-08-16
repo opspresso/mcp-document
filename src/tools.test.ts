@@ -14,7 +14,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { parseMarkdown } from "./markdown.js";
-import { callTool, CONTENT_TYPES, summarise, TOOLS } from "./tools.js";
+import { callTool, CONTENT_TYPES, PROFILES, summarise, TOOLS } from "./tools.js";
 import { renderDocx } from "./write/docx.js";
 
 async function call(
@@ -41,6 +41,12 @@ test("both tools are offered with an object schema", () => {
   for (const tool of TOOLS) {
     assert.equal(tool.inputSchema.type, "object");
   }
+});
+
+test("render_document offers the five professional profiles", () => {
+  const render = TOOLS.find((tool) => tool.name === "render_document");
+  assert.deepEqual(render?.inputSchema.properties.profile.enum, [...PROFILES]);
+  assert.deepEqual(render?.inputSchema.required, ["format", "content"]);
 });
 
 test("a document read inline comes back with its provenance stated", async () => {
@@ -103,6 +109,16 @@ test("writing refuses a format it does not have", async () => {
   const { text, isError } = await call("render_document", { format: "hwp", content: "body" });
   assert.equal(isError, true);
   assert.match(text, /docx, pdf, hwpx/);
+});
+
+test("writing refuses an unknown profile and names every choice", async () => {
+  const { text, isError } = await call("render_document", {
+    format: "docx",
+    profile: "luxury",
+    content: "## 결론\n\n진행한다.",
+  });
+  assert.equal(isError, true);
+  assert.match(text, /`profile` must be one of executive, consulting, formal, technical, standard/);
 });
 
 test("writing needs content", async () => {

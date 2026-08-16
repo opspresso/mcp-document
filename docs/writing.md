@@ -28,6 +28,23 @@ with the fix stated: PowerPoint's `svgBlip` demands a raster fallback part
 beside the vector one, and producing that means rasterising, which this
 repository does not do. Rasterise first, send the PNG.
 
+`profile` chooses the editorial and visual system independently of the file
+format. It is optional and defaults to `executive`:
+
+| Profile | Use it for | Treatment |
+|---|---|---|
+| `executive` | leadership decisions, board reports, approval papers | quiet navy, compact authority, strong figures |
+| `consulting` | strategy, proposals, conclusion-led presentations | stronger accent, sharper comparison and storyline |
+| `formal` | public-sector and external submissions | print-first, square geometry, light table headers |
+| `technical` | architecture, RFCs and engineering reports | restrained teal, dense structure, light table headers |
+| `standard` | general-purpose corporate documents | the classic corporate-blue system |
+
+The profile does not change or reinterpret the words. It decides the palette,
+cover proportion, table treatment and shape language; the Markdown structure
+still decides what the content is. A caller that needs the classic look can ask
+for `standard`, while a call with no profile receives the professional
+`executive` default.
+
 Lists carry **literal markers** in all four formats rather than a numbering
 definition. What real numbering buys is the reader's editor renumbering a list
 they edit; nothing here is edited before it is read, and the literal form is

@@ -11,7 +11,14 @@
 
 import { escapeXml } from "../../xml.js";
 import { HANGUL } from "../semantics.js";
-import { CHART, DECK, PALETTE, centiPoints } from "../theme.js";
+import {
+  DECK,
+  LEADING,
+  TYPOGRAPHY,
+  centiPoints,
+  emu,
+  type DesignProfile,
+} from "../theme.js";
 import { PRODUCER } from "../../version.js";
 import {
   BODY_BOX,
@@ -19,7 +26,6 @@ import {
   CLOSING_BODY_BOX,
   CLOSING_TITLE_BOX,
   CONTENT_WIDTH,
-  COVER_BAND_WIDTH,
   COVER_TITLE_BOX,
   HEAD_RULE,
   HEAD_RULE_GAP,
@@ -195,8 +201,9 @@ export function presentationRelsXml(slides: number): string {
  * `write/docx.ts` names none: the substitute PowerPoint picks on the reader's
  * machine beats one picked here from a font that may not be installed.
  */
-export function themeXml(): string {
-  const accents = CHART.slice(0, 6);
+export function themeXml(design: DesignProfile): string {
+  const accents = design.chart.slice(0, 6);
+  const { palette } = design;
   const line = (width: number): string =>
     `<a:ln w="${width}" cap="flat" cmpd="sng" algn="ctr">` +
     '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>' +
@@ -206,15 +213,15 @@ export function themeXml(): string {
     `<a:theme xmlns:a="${A}" name="Office">` +
     "<a:themeElements>" +
     '<a:clrScheme name="Office">' +
-    `<a:dk1><a:sysClr val="windowText" lastClr="${PALETTE.ink}"/></a:dk1>` +
-    `<a:lt1><a:sysClr val="window" lastClr="${PALETTE.onBrand}"/></a:lt1>` +
-    `<a:dk2><a:srgbClr val="${PALETTE.brand}"/></a:dk2>` +
-    `<a:lt2><a:srgbClr val="${PALETTE.brandTint}"/></a:lt2>` +
+    `<a:dk1><a:sysClr val="windowText" lastClr="${palette.ink}"/></a:dk1>` +
+    `<a:lt1><a:sysClr val="window" lastClr="${palette.onBrand}"/></a:lt1>` +
+    `<a:dk2><a:srgbClr val="${palette.brand}"/></a:dk2>` +
+    `<a:lt2><a:srgbClr val="${palette.brandTint}"/></a:lt2>` +
     accents
       .map((colour, index) => `<a:accent${index + 1}><a:srgbClr val="${colour}"/></a:accent${index + 1}>`)
       .join("") +
-    `<a:hlink><a:srgbClr val="${PALETTE.brandDeep}"/></a:hlink>` +
-    `<a:folHlink><a:srgbClr val="${PALETTE.brandDeep}"/></a:folHlink>` +
+    `<a:hlink><a:srgbClr val="${palette.brandDeep}"/></a:hlink>` +
+    `<a:folHlink><a:srgbClr val="${palette.brandDeep}"/></a:folHlink>` +
     "</a:clrScheme>" +
     '<a:fontScheme name="Office">' +
     '<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +
@@ -281,6 +288,7 @@ function decorText(
   name: string,
   box: { x: number; y: number; width: number; height: number },
   text: string,
+  design: DesignProfile,
 ): string {
   // The same language labelling the slides' runs carry, for the same reason:
   // an unlabelled 한글 footer is set in the reader's locale's CJK face.
@@ -292,7 +300,7 @@ function decorText(
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>' +
     '<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0"/><a:lstStyle/>' +
     `<a:p><a:pPr algn="l"/><a:r><a:rPr lang="${lang}" sz="${centiPoints(DECK.caption)}" dirty="0">` +
-    `<a:solidFill><a:srgbClr val="${PALETTE.inkMuted}"/></a:solidFill></a:rPr>` +
+    `<a:solidFill><a:srgbClr val="${design.palette.inkMuted}"/></a:solidFill></a:rPr>` +
     `<a:t>${escapeXml(text)}</a:t></a:r></a:p></p:txBody></p:sp>`
   );
 }
@@ -322,7 +330,12 @@ function headRule(id: number, x: number, titleY: number, colour: string): string
  * cover's tinted ground and brand band, the section divider's brand field,
  * the content footer that names the deck. `deckTitle` is what that footer says.
  */
-export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
+export function slideLayoutXml(
+  index: LayoutIndex,
+  deckTitle: string,
+  design: DesignProfile,
+): string {
+  const { palette } = design;
   const wrap = (
     type: string,
     name: string,
@@ -343,14 +356,18 @@ export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
     case 1:
       // The cover: the quiet tinted ground, a brand band down the left edge, a
       // rule above where the title lands.
-      return wrap("title", "Cover", background(PALETTE.surfaceTint), [
-        decorRect(
-          2,
-          "Band",
-          { x: 0, y: 0, width: COVER_BAND_WIDTH, height: SLIDE_HEIGHT },
-          PALETTE.brand,
-        ),
-        headRule(3, SIDE_MARGIN, COVER_TITLE_BOX.y, PALETTE.brand),
+      return wrap("title", "Cover", background(palette.surfaceTint), [
+        ...(design.deck.coverBandPoints > 0
+          ? [
+              decorRect(
+                2,
+                "Band",
+                { x: 0, y: 0, width: emu(design.deck.coverBandPoints), height: SLIDE_HEIGHT },
+                palette.brand,
+              ),
+            ]
+          : []),
+        headRule(3, SIDE_MARGIN, COVER_TITLE_BOX.y, palette.brand),
         layoutPlaceholder(4, "Title 1", '<p:ph type="title"/>', COVER_TITLE_BOX),
         layoutPlaceholder(5, "Subtitle 2", '<p:ph type="body" idx="1"/>', SUBTITLE_BOX),
       ]);
@@ -369,6 +386,7 @@ export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
             height: NUMBER_BOX.height,
           },
           deckTitle,
+          design,
         ),
         layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', TITLE_BOX),
         layoutPlaceholder(4, "Body 2", '<p:ph type="body" idx="1"/>', BODY_BOX),
@@ -376,18 +394,18 @@ export function slideLayoutXml(index: LayoutIndex, deckTitle: string): string {
     case 3:
       // A section divider: a full brand field, the rule in the lighter brand
       // above the title. The ordinal is content and comes with the slide.
-      return wrap("secHead", "Section", background(PALETTE.brand), [
-        headRule(2, SIDE_MARGIN, SECTION_TITLE_BOX.y, PALETTE.brandLight),
+      return wrap("secHead", "Section", background(palette.brand), [
+        headRule(2, SIDE_MARGIN, SECTION_TITLE_BOX.y, palette.brandLight),
         layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', SECTION_TITLE_BOX),
       ]);
     case 4:
       // The closing: the cover's ground, and a centred rule above the line.
-      return wrap("cust", "Closing", background(PALETTE.surfaceTint), [
+      return wrap("cust", "Closing", background(palette.surfaceTint), [
         headRule(
           2,
           Math.round((SLIDE_WIDTH - HEAD_RULE.width) / 2),
           CLOSING_TITLE_BOX.y,
-          PALETTE.brand,
+          palette.brand,
         ),
         layoutPlaceholder(3, "Title 1", '<p:ph type="title"/>', CLOSING_TITLE_BOX),
         layoutPlaceholder(4, "Body 2", '<p:ph type="body" idx="1"/>', CLOSING_BODY_BOX),
@@ -401,9 +419,11 @@ export function slideLayoutRelsXml(): string {
   ]);
 }
 
-export function slideMasterXml(): string {
+export function slideMasterXml(design: DesignProfile): string {
   const style = (size: number): string =>
-    `<a:lvl1pPr><a:defRPr sz="${size}"><a:solidFill><a:srgbClr val="${PALETTE.ink}"/></a:solidFill>` +
+    `<a:lvl1pPr><a:lnSpc><a:spcPct val="${Math.round(LEADING.deck.body * 100000)}"/></a:lnSpc>` +
+    `<a:defRPr sz="${size}" kern="${centiPoints(TYPOGRAPHY.kerningFromPoints)}" spc="${TYPOGRAPHY.tracking}">` +
+    `<a:solidFill><a:srgbClr val="${design.palette.ink}"/></a:solidFill>` +
     "</a:defRPr></a:lvl1pPr>";
   return (
     `<p:sldMaster xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}">` +

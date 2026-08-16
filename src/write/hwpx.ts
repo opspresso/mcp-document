@@ -30,7 +30,15 @@ import { buildZip, stored } from "../zip.js";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { columnShares } from "./table.js";
 import { HANGUL, TOC_THRESHOLD, coverOf, tocEntriesOf, type Cover } from "./semantics.js";
-import { DOC, centiPoints, hashed } from "./theme.js";
+import {
+  DOC,
+  LEADING,
+  centiPoints,
+  designFor,
+  hashed,
+  type DesignProfile,
+  type DocumentProfile,
+} from "./theme.js";
 import { PRODUCER, SERVER_NAME, SERVER_VERSION } from "../version.js";
 
 const DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -87,13 +95,16 @@ const PARA_INDENT_LEVELS = 5;
 const PARA_CODE = PARA_INDENT_BASE + PARA_INDENT_LEVELS;
 const PARA_QUOTE = PARA_CODE + 1;
 const PARA_HEADING = PARA_QUOTE + 1;
-/** Table cells whose column asked to be centred or set flush right. */
-const PARA_CENTER = PARA_HEADING + 1;
+/** Table cells, with a compact line rhythm and their requested alignment. */
+const PARA_TABLE_LEFT = PARA_HEADING + 1;
+const PARA_CENTER = PARA_TABLE_LEFT + 1;
 const PARA_RIGHT = PARA_CENTER + 1;
-/** The cover title, dropped a third down its page by its top margin. */
-const PARA_COVER = PARA_RIGHT + 1;
+/** The cover rule, title and subtitle use their own spacing roles. */
+const PARA_COVER_RULE = PARA_RIGHT + 1;
+const PARA_COVER = PARA_COVER_RULE + 1;
+const PARA_SUBTITLE = PARA_COVER + 1;
 /** A contents sub-entry, indented one step with no hanging. */
-const PARA_TOC2 = PARA_COVER + 1;
+const PARA_TOC2 = PARA_SUBTITLE + 1;
 const PARA_COUNT = PARA_TOC2 + 1;
 
 /**
@@ -108,7 +119,8 @@ const FILL_CELL = 2;
 const FILL_HEADER = 3;
 const FILL_ZEBRA = 4;
 const FILL_HEADING_RULE = 5;
-const FILL_COUNT = 5;
+const FILL_COVER_RULE = 6;
+const FILL_COUNT = 6;
 
 const encoder = new TextEncoder();
 
@@ -164,21 +176,33 @@ interface Fill {
   ground?: string;
 }
 
-const FILLS: Record<number, Fill> = {
-  [FILL_NONE]: {},
-  [FILL_CELL]: { edges: { sides: "horizontal", colour: hashed("rule") } },
-  [FILL_HEADER]: { edges: { sides: "horizontal", colour: hashed("brand") }, ground: hashed("brand") },
-  [FILL_ZEBRA]: { edges: { sides: "horizontal", colour: hashed("rule") }, ground: hashed("brandTint") },
-  [FILL_HEADING_RULE]: {
-    edges: { sides: "bottom", colour: hashed("brandLight"), width: "0.4 mm" },
-  },
-};
+function fillsFor(design: DesignProfile): Record<number, Fill> {
+  const { palette } = design;
+  return {
+    [FILL_NONE]: {},
+    [FILL_CELL]: { edges: { sides: "horizontal", colour: hashed("rule", palette) } },
+    [FILL_HEADER]: {
+      edges: { sides: "horizontal", colour: hashed("brand", palette) },
+      ground: `#${design.table.headerFill}`,
+    },
+    [FILL_ZEBRA]: {
+      edges: { sides: "horizontal", colour: hashed("rule", palette) },
+      ground: hashed("brandTint", palette),
+    },
+    [FILL_HEADING_RULE]: {
+      edges: { sides: "bottom", colour: hashed("brandLight", palette), width: "0.4 mm" },
+    },
+    [FILL_COVER_RULE]: {
+      edges: { sides: "bottom", colour: hashed("brand", palette), width: "1.0 mm" },
+    },
+  };
+}
 
-function borderFill(id: number): string {
-  const fill = FILLS[id] ?? {};
+function borderFill(id: number, fills: Readonly<Record<number, Fill>>, design: DesignProfile): string {
+  const fill = fills[id] ?? {};
   const edge = (name: string, drawn: boolean): string =>
     `<hh:${name} type="${drawn ? "SOLID" : "NONE"}" ` +
-    `width="${fill.edges?.width ?? "0.12 mm"}" color="${fill.edges?.colour ?? hashed("rule")}"/>`;
+    `width="${fill.edges?.width ?? "0.12 mm"}" color="${fill.edges?.colour ?? hashed("rule", design.palette)}"/>`;
   const sides = fill.edges?.sides;
   return (
     `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">` +
@@ -188,16 +212,16 @@ function borderFill(id: number): string {
     edge("rightBorder", false) +
     edge("topBorder", sides === "horizontal") +
     edge("bottomBorder", sides !== undefined) +
-    `<hh:diagonal type="NONE" width="0.1 mm" color="${hashed("ink")}"/>` +
+    `<hh:diagonal type="NONE" width="0.1 mm" color="${hashed("ink", design.palette)}"/>` +
     (fill.ground
-      ? `<hc:fillBrush><hc:winBrush faceColor="${fill.ground}" hatchColor="${hashed("ink")}" alpha="0"/></hc:fillBrush>`
+      ? `<hc:fillBrush><hc:winBrush faceColor="${fill.ground}" hatchColor="${hashed("ink", design.palette)}" alpha="0"/></hc:fillBrush>`
       : "") +
     "</hh:borderFill>"
   );
 }
 
 /** One `charPr`. `id` below 16 is the style bit pattern; above it, a named role. */
-function charProperty(id: number): string {
+function charProperty(id: number, design: DesignProfile): string {
   const heading = id >= HEADING_CHAR_BASE && id < HEADING_CHAR_BASE + 6;
   const quote = id === QUOTE_CHAR;
   const tableHeader = id === TABLE_HEADER_CHAR;
@@ -219,16 +243,16 @@ function charProperty(id: number): string {
             ? CODE_SIZE
             : BODY_SIZE;
   const colour = tableHeader
-    ? hashed("onBrand")
+    ? `#${design.table.headerText}`
     : heading
-      ? hashed("brand")
+      ? hashed("brand", design.palette)
       : id === ORDINAL_CHAR
-        ? hashed("brandLight")
+        ? hashed("brandLight", design.palette)
         : link
-          ? hashed("brandDeep")
+          ? hashed("brandDeep", design.palette)
           : quote || id === SUBTITLE_CHAR || id === TOC_MUTED_CHAR
-            ? hashed("inkMuted")
-            : hashed("ink");
+            ? hashed("inkMuted", design.palette)
+            : hashed("ink", design.palette);
   const font = code ? 1 : 0;
   const reference = FONT_LANGUAGES.map(
     (language) => `${language.toLowerCase()}="${font}"`,
@@ -237,17 +261,40 @@ function charProperty(id: number): string {
   const zero = FONT_LANGUAGES.map((language) => `${language.toLowerCase()}="0"`).join(" ");
   return (
     `<hh:charPr id="${id}" height="${height}" textColor="${colour}" shadeColor="none" ` +
-    `useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="${FILL_NONE}">` +
+    `useFontSpace="0" useKerning="1" symMark="NONE" borderFillIDRef="${FILL_NONE}">` +
     `<hh:fontRef ${reference}/>` +
     `<hh:ratio ${scale}/><hh:spacing ${zero}/><hh:relSz ${scale}/><hh:offset ${zero}/>` +
     (bold ? "<hh:bold/>" : "") +
     (italic ? "<hh:italic/>" : "") +
-    (link ? `<hh:underline type="BOTTOM" shape="SOLID" color="${hashed("brandDeep")}"/>` : "") +
+    (link
+      ? `<hh:underline type="BOTTOM" shape="SOLID" color="${hashed("brandDeep", design.palette)}"/>`
+      : "") +
     "</hh:charPr>"
   );
 }
 
-function paraProperty(id: number): string {
+function leadingFor(id: number): number {
+  if (id === PARA_HEADING) {
+    return LEADING.document.heading;
+  }
+  if (id === PARA_COVER) {
+    return LEADING.document.coverTitle;
+  }
+  if (id === PARA_SUBTITLE) {
+    return LEADING.document.subtitle;
+  }
+  if (
+    id === PARA_CODE ||
+    id === PARA_TABLE_LEFT ||
+    id === PARA_CENTER ||
+    id === PARA_RIGHT
+  ) {
+    return LEADING.document.compact;
+  }
+  return LEADING.document.body;
+}
+
+function paraProperty(id: number, design: DesignProfile): string {
   const indentLevel =
     id >= PARA_INDENT_BASE && id < PARA_INDENT_BASE + PARA_INDENT_LEVELS
       ? id - PARA_INDENT_BASE
@@ -255,6 +302,7 @@ function paraProperty(id: number): string {
   const heading = id === PARA_HEADING;
   const code = id === PARA_CODE;
   const quote = id === PARA_QUOTE;
+  const coverRule = id === PARA_COVER_RULE;
   const cover = id === PARA_COVER;
   const left =
     quote || id === PARA_TOC2
@@ -267,10 +315,20 @@ function paraProperty(id: number): string {
   const intent = indentLevel !== undefined ? -INDENT_STEP : 0;
   // The cover's top margin is what drops its title a third down the page —
   // the same composition the DOCX and PDF covers set with their own units.
-  const before = heading ? 600 : cover ? 20000 : 0;
-  const after = code ? 0 : cover ? 800 : id === PARA_TOC2 ? 150 : 300;
+  const before = heading ? 600 : coverRule ? 20000 : 0;
+  const after = code ? 0 : coverRule || cover ? 800 : id === PARA_TOC2 ? 150 : 300;
+  const right = coverRule
+    ? Math.max(0, TEXT_WIDTH - Math.round(design.doc.coverRulePoints * 100))
+    : 0;
+  const leading = Math.round(leadingFor(id) * 100);
   const horizontal =
-    id === PARA_CENTER ? "CENTER" : id === PARA_RIGHT ? "RIGHT" : "JUSTIFY";
+    id === PARA_CENTER
+      ? "CENTER"
+      : id === PARA_RIGHT
+        ? "RIGHT"
+        : id === PARA_TABLE_LEFT || coverRule || cover || id === PARA_SUBTITLE
+          ? "LEFT"
+          : "JUSTIFY";
   return (
     `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" ` +
     'suppressLineNumbers="0" checked="0">' +
@@ -281,25 +339,26 @@ function paraProperty(id: number): string {
     '<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>' +
     `<hh:switch><hh:case hh:required-namespace="${NS.app}">` +
     `<hh:margin><hc:intent value="${intent}" unit="HWPUNIT"/><hc:left value="${left}" unit="HWPUNIT"/>` +
-    '<hc:right value="0" unit="HWPUNIT"/>' +
+    `<hc:right value="${right}" unit="HWPUNIT"/>` +
     `<hc:prev value="${before}" unit="HWPUNIT"/><hc:next value="${after}" unit="HWPUNIT"/></hh:margin>` +
-    '<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>' +
+    `<hh:lineSpacing type="PERCENT" value="${leading}" unit="HWPUNIT"/>` +
     "</hh:case><hh:default>" +
     `<hh:margin><hc:intent value="${intent}" unit="HWPUNIT"/><hc:left value="${left}" unit="HWPUNIT"/>` +
-    '<hc:right value="0" unit="HWPUNIT"/>' +
+    `<hc:right value="${right}" unit="HWPUNIT"/>` +
     `<hc:prev value="${before}" unit="HWPUNIT"/><hc:next value="${after}" unit="HWPUNIT"/></hh:margin>` +
-    '<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>' +
+    `<hh:lineSpacing type="PERCENT" value="${leading}" unit="HWPUNIT"/>` +
     "</hh:default></hh:switch>" +
     // A heading carries a hairline under it — the same signal the DOCX and PDF
     // renderers draw, said in the only way OWPML has: a border fill whose only
     // drawn edge is the bottom one.
-    `<hh:border borderFillIDRef="${heading ? FILL_HEADING_RULE : FILL_NONE}" offsetLeft="0" ` +
+    `<hh:border borderFillIDRef="${coverRule ? FILL_COVER_RULE : heading ? FILL_HEADING_RULE : FILL_NONE}" offsetLeft="0" ` +
     'offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>' +
     "</hh:paraPr>"
   );
 }
 
-function headerXml(): string {
+function headerXml(design: DesignProfile): string {
+  const fills = fillsFor(design);
   return (
     `<hh:head xmlns:hh="${NS.head}" xmlns:hp="${NS.paragraph}" xmlns:hc="${NS.core}" ` +
     'version="1.31" secCnt="1">' +
@@ -307,15 +366,15 @@ function headerXml(): string {
     "<hh:refList>" +
     fontfaces() +
     `<hh:borderFills itemCnt="${FILL_COUNT}">` +
-    Array.from({ length: FILL_COUNT }, (_, index) => borderFill(index + 1)).join("") +
+    Array.from({ length: FILL_COUNT }, (_, index) => borderFill(index + 1, fills, design)).join("") +
     "</hh:borderFills>" +
     `<hh:charProperties itemCnt="${CHAR_COUNT}">` +
-    Array.from({ length: CHAR_COUNT }, (_, id) => charProperty(id)).join("") +
+    Array.from({ length: CHAR_COUNT }, (_, id) => charProperty(id, design)).join("") +
     "</hh:charProperties>" +
     '<hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>' +
     '<hh:numberings itemCnt="0"/>' +
     `<hh:paraProperties itemCnt="${PARA_COUNT}">` +
-    Array.from({ length: PARA_COUNT }, (_, id) => paraProperty(id)).join("") +
+    Array.from({ length: PARA_COUNT }, (_, id) => paraProperty(id, design)).join("") +
     "</hh:paraProperties>" +
     '<hh:styles itemCnt="1"><hh:style id="0" type="PARA" name="바탕글" engName="Normal" ' +
     'paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles>' +
@@ -336,7 +395,7 @@ function headerXml(): string {
  * have many forgiving implementations and a one-element field; this one has
  * neither, and a numbered page is not worth a document 한글 refuses to open.
  */
-function sectionProperties(): string {
+function sectionProperties(design: DesignProfile): string {
   return (
     '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" ' +
     'tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="1" memoShapeIDRef="0" ' +
@@ -350,12 +409,12 @@ function sectionProperties(): string {
     `<hp:margin header="${MARGIN.header}" footer="${MARGIN.footer}" gutter="0" left="${MARGIN.left}" ` +
     `right="${MARGIN.right}" top="${MARGIN.top}" bottom="${MARGIN.bottom}"/></hp:pagePr>` +
     '<hp:footNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>' +
-    `<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="${hashed("ink")}"/>` +
+    `<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="${hashed("ink", design.palette)}"/>` +
     '<hp:noteSpacing betweenNotes="850" belowLine="567" aboveLine="850"/>' +
     '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="EACH_COLUMN" beneathText="0"/>' +
     "</hp:footNotePr>" +
     '<hp:endNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>' +
-    `<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="${hashed("ink")}"/>` +
+    `<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="${hashed("ink", design.palette)}"/>` +
     '<hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>' +
     '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="0"/>' +
     "</hp:endNotePr>" +
@@ -421,8 +480,8 @@ const FORCED_BREAK_AT = 36;
  * `LINESEG_SAFETY` — plus the one non-negotiable contract above, imposed by
  * the reader rather than by geometry.
  */
-function lineSegments(text: string, size: number, width: number): string {
-  const lineHeight = Math.round(size * 1.6);
+function lineSegments(text: string, size: number, width: number, leading: number): string {
+  const lineHeight = Math.round(size * leading);
   const usable = Math.max(size, width * LINESEG_SAFETY);
   // UTF-16 offsets, which is what `textpos` counts.
   const starts: number[] = [0];
@@ -463,6 +522,8 @@ class Renderer {
   /** The next paragraph opens a fresh page — how a cover or a chapter ends. */
   private breakNext = false;
 
+  constructor(private readonly design: DesignProfile = designFor()) {}
+
   /** Ask for a page break before whatever paragraph comes next. */
   breakBeforeNext(): void {
     this.breakNext = true;
@@ -479,7 +540,7 @@ class Renderer {
 
   /** One `hp:run`. Tabs become the element HWPX uses for them, not a character. */
   private run(text: string, charId: number, extra: string): string {
-    const prefix = this.sectionEmitted ? "" : sectionProperties();
+    const prefix = this.sectionEmitted ? "" : sectionProperties(this.design);
     this.sectionEmitted = true;
     const body = text
       .split("\t")
@@ -505,7 +566,7 @@ class Renderer {
     return (
       `<hp:p id="${id}" paraPrIDRef="${paraId}" styleIDRef="0" pageBreak="${pageBreak}" columnBreak="0" merged="0">` +
       inner +
-      lineSegments(text, size, width) +
+      lineSegments(text, size, width, leadingFor(paraId)) +
       "</hp:p>"
     );
   }
@@ -524,7 +585,7 @@ class Renderer {
       const align = block.align[column];
       const inner = this.paragraph(
         this.runs(runs, header ? TABLE_HEADER_CHAR : undefined),
-        align === "right" ? PARA_RIGHT : align === "center" ? PARA_CENTER : PARA_BODY,
+        align === "right" ? PARA_RIGHT : align === "center" ? PARA_CENTER : PARA_TABLE_LEFT,
         BODY_SIZE,
         plainOf(runs),
         // The text area, not the cell: the margins written into `cellMargin`
@@ -635,13 +696,13 @@ class Renderer {
   }
 
   /**
-   * The cover: the title dropped a third down its page by `PARA_COVER`'s top
-   * margin, the subtitle under it, and a page break for whatever follows. No
-   * brand rule here, unlike the DOCX and PDF covers — a paragraph border box
-   * shortened by indent tricks is a shape this format's one reader has to get
-   * exactly right, and the composition carries without it.
+   * The cover: a short profile rule drops a third down the page, then the title
+   * and subtitle follow with role-specific leading. A paragraph border is used
+   * rather than a drawing control, keeping the package inside the small OWPML
+   * surface this renderer can validate.
    */
   cover(cover: Cover): string {
+    const rule = this.paragraph(this.runs([]), PARA_COVER_RULE, BODY_SIZE, "");
     const title = this.paragraph(
       this.runs(cover.title, COVER_TITLE_CHAR),
       PARA_COVER,
@@ -651,13 +712,13 @@ class Renderer {
     const subtitle = cover.subtitle
       ? this.paragraph(
           this.runs(cover.subtitle, SUBTITLE_CHAR),
-          PARA_BODY,
+          PARA_SUBTITLE,
           centiPoints(DOC.subtitle),
           plainOf(cover.subtitle),
         )
       : "";
     this.breakBeforeNext();
-    return title + subtitle;
+    return rule + title + subtitle;
   }
 
   /**
@@ -714,8 +775,8 @@ class Renderer {
   }
 }
 
-function sectionXml(document: MarkdownDocument): string {
-  const renderer = new Renderer();
+function sectionXml(document: MarkdownDocument, design: DesignProfile): string {
+  const renderer = new Renderer(design);
   const { cover, body } = coverOf(document.blocks);
   const entries = tocEntriesOf(body);
   let out = cover ? renderer.cover(cover) : "";
@@ -817,9 +878,11 @@ export interface HwpxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
+  profile?: DocumentProfile;
 }
 
 export function renderHwpx(document: MarkdownDocument, options: HwpxOptions): Uint8Array {
+  const design = designFor(options.profile);
   return buildZip({
     // First, and stored rather than deflated: the same rule ODF packaging uses,
     // and a reader that checks for it checks at a fixed offset.
@@ -829,7 +892,7 @@ export function renderHwpx(document: MarkdownDocument, options: HwpxOptions): Ui
     "META-INF/container.xml": part(containerXml()),
     "META-INF/manifest.xml": part(manifestXml()),
     "Contents/content.hpf": part(contentHpf(options.title, options.created)),
-    "Contents/header.xml": part(headerXml()),
-    "Contents/section0.xml": part(sectionXml(document)),
+    "Contents/header.xml": part(headerXml(design)),
+    "Contents/section0.xml": part(sectionXml(document, design)),
   });
 }

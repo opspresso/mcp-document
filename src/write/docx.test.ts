@@ -97,6 +97,17 @@ test("a run's leading and trailing spaces are preserved", () => {
   assert.ok(partOf(build("a b"), "word/document.xml").includes('xml:space="preserve"'));
 });
 
+test("body, headings and cover carry deliberate leading and native tracking", () => {
+  const bytes = build("# 여러 줄 표지 제목\n\n부제\n\n## 여러 줄 본문 제목\n\n본문");
+  const styles = partOf(bytes, "word/styles.xml");
+  const body = partOf(bytes, "word/document.xml");
+  assert.ok(styles.includes('<w:spacing w:after="120" w:line="360" w:lineRule="auto"/>'));
+  assert.match(styles, /<w:style w:type="paragraph" w:styleId="Heading1">[\s\S]*?<w:spacing w:before="240" w:after="80" w:line="288" w:lineRule="auto"\/>/);
+  assert.ok(styles.includes('<w:spacing w:val="0"/><w:kern w:val="24"/>'));
+  assert.ok(body.includes('<w:spacing w:before="0" w:after="240" w:line="276" w:lineRule="auto"/>'));
+  assert.ok(body.includes('<w:spacing w:after="0" w:line="336" w:lineRule="auto"/>'));
+});
+
 test("lists come back as the markers they were written with", () => {
   assert.equal(roundTrip("- one\n- two"), "- one\n- two");
   assert.equal(roundTrip("1. first\n2. second"), "1. first\n2. second");
@@ -113,6 +124,17 @@ test("a table becomes a table, and every cell has a paragraph in it", () => {
   const body = partOf(bytes, "word/document.xml");
   // A `w:tc` with no `w:p` inside is what makes Word call a file corrupt.
   assert.equal(/<w:tc>(?:(?!<w:p[ />]).)*<\/w:tc>/s.test(body), false);
+});
+
+test("a technical profile uses its restrained light table header", () => {
+  const bytes = renderDocx(parseMarkdown("| 이름 | 값 |\n|---|---:|\n| 처리량 | 42 |"), {
+    title: "test",
+    created: CREATED,
+    profile: "technical",
+  });
+  const body = partOf(bytes, "word/document.xml");
+  assert.ok(body.includes('<w:shd w:val="clear" w:color="auto" w:fill="E8F3F1"/>'));
+  assert.ok(body.includes('<w:color w:val="0F4C5C"/>'));
 });
 
 test("a column asked to be set right is set right, and a plain one is untouched", () => {

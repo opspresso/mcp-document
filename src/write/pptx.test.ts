@@ -88,6 +88,33 @@ test("a deck has the scaffolding its content types declare", () => {
   }
 });
 
+test("profiles change the deck theme and cover geometry", () => {
+  const consulting = renderPptx(parseMarkdown("# 전략 제안"), {
+    title: "test",
+    created: CREATED,
+    profile: "consulting",
+  }).bytes;
+  assert.ok(partOf(consulting, "ppt/theme/theme1.xml").includes('<a:dk2><a:srgbClr val="0B2D4D"/></a:dk2>'));
+  assert.ok(partOf(consulting, "ppt/slideLayouts/slideLayout1.xml").includes('cx="457200"'));
+
+  const formal = renderPptx(parseMarkdown("# 공식 보고서"), {
+    title: "test",
+    created: CREATED,
+    profile: "formal",
+  }).bytes;
+  assert.equal(partOf(formal, "ppt/slideLayouts/slideLayout1.xml").includes('name="Band"'), false);
+});
+
+test("slides state their leading, zero tracking and kerning threshold", () => {
+  const cover = partOf(build("# 여러 줄 표지 제목\n\n부제"), "ppt/slides/slide1.xml");
+  assert.ok(cover.includes('<a:lnSpc><a:spcPct val="110000"/></a:lnSpc>'));
+  assert.ok(cover.includes('<a:lnSpc><a:spcPct val="130000"/></a:lnSpc>'));
+  assert.ok(cover.includes('kern="1200" spc="0"'));
+
+  const content = partOf(build("## 제목\n\n여러 줄 본문"), "ppt/slides/slide1.xml");
+  assert.ok(content.includes('<a:lnSpc><a:spcPct val="135000"/></a:lnSpc>'));
+});
+
 test("what this writes, this reads", () => {
   const bytes = build("# 제목\n\n## 첫째\n\n본문");
   assert.equal(detect(bytes, "", "deck.pptx").format, "pptx");

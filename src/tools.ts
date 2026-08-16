@@ -29,6 +29,11 @@ import { renderHwpx } from "./write/hwpx.js";
 import { renderPdf } from "./write/pdf.js";
 import { renderPptx } from "./write/pptx/index.js";
 import type { ImageAsset } from "./write/image.js";
+import {
+  DEFAULT_PROFILE,
+  DOCUMENT_PROFILES,
+  type DocumentProfile,
+} from "./write/theme.js";
 
 /**
  * A text block, or an embedded resource carrying bytes.
@@ -52,6 +57,7 @@ export interface ToolResult {
 
 export const FORMATS = ["docx", "pdf", "hwpx", "pptx"] as const;
 export type Format = (typeof FORMATS)[number];
+export const PROFILES = DOCUMENT_PROFILES;
 
 export const CONTENT_TYPES: Record<Format, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -91,7 +97,10 @@ export const TOOLS = [
       "Write a document and return the file. Takes Markdown and produces DOCX " +
       "(Word), PDF, HWPX (한글) or PPTX (PowerPoint) — pick the one the reader will open. Use " +
       "this to deliver something a person will read or share: a report, a summary, meeting " +
-      "notes, a proposal, a slide deck. Supports headings, paragraphs, bold, italic, inline " +
+      "notes, a proposal, a slide deck. Pick a `profile` for its purpose: executive for " +
+      "leadership decisions, consulting for strategy, formal for submissions, technical for " +
+      "engineering, or standard for the classic corporate style; executive is the default. " +
+      "Supports headings, paragraphs, bold, italic, inline " +
       "code, links, bullet and numbered lists, tables, block quotes, fenced code blocks and " +
       "horizontal rules. A table column is set flush right with `---:` in the divider row and " +
       "centred with `:---:` — set columns of numbers right, or their digits do not line up. " +
@@ -123,6 +132,15 @@ export const TOOLS = [
           enum: [...FORMATS],
           description:
             "docx for Word, pdf to be read as-is, hwpx for 한글, pptx for a slide deck.",
+        },
+        profile: {
+          type: "string",
+          enum: [...PROFILES],
+          description:
+            "Document design and editorial profile. executive for leadership decisions, " +
+            "consulting for strategy and proposals, formal for public or external submissions, " +
+            "technical for architecture and engineering, standard for the classic corporate style. " +
+            "Defaults to executive.",
         },
         content: { type: "string", description: "The document body, as Markdown." },
         title: {
@@ -239,6 +257,14 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
     return failed(`Error: \`format\` must be one of ${FORMATS.join(", ")}.`);
   }
   const format = requested as Format;
+  const requestedProfile = args.profile;
+  if (
+    requestedProfile !== undefined &&
+    (typeof requestedProfile !== "string" || !PROFILES.includes(requestedProfile as DocumentProfile))
+  ) {
+    return failed(`Error: \`profile\` must be one of ${PROFILES.join(", ")}.`);
+  }
+  const profile = (requestedProfile ?? DEFAULT_PROFILE) as DocumentProfile;
   const markdown = args.content;
   if (typeof markdown !== "string" || markdown.trim() === "") {
     return failed("Error: `content` is required, as Markdown.");
@@ -264,7 +290,7 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
     const created = new Date();
     const assets = parseAssets(args.assets, format);
 
-    return await renderTo(format, document, { title, created, filename, assets });
+    return await renderTo(format, document, { title, created, filename, assets, profile });
   } catch (error) {
     console.warn(`render_document failed: ${format} — ${describe(error)}`);
     return failed(
@@ -356,7 +382,13 @@ function parseAssets(
 async function renderTo(
   format: Format,
   document: MarkdownDocument,
-  meta: { title: string; created: Date; filename: string; assets?: Record<string, ImageAsset> },
+  meta: {
+    title: string;
+    created: Date;
+    filename: string;
+    assets?: Record<string, ImageAsset>;
+    profile: DocumentProfile;
+  },
 ): Promise<ToolResult> {
   let bytes: Uint8Array;
   let extra = "";
@@ -364,23 +396,30 @@ async function renderTo(
     bytes = renderDocx(document, {
       title: meta.title,
       created: meta.created.toISOString(),
+      profile: meta.profile,
       ...(meta.assets ? { assets: meta.assets } : {}),
     });
   } else if (format === "hwpx") {
     bytes = renderHwpx(document, {
       title: meta.title,
       created: meta.created.toISOString(),
+      profile: meta.profile,
     });
   } else if (format === "pptx") {
     const rendered = renderPptx(document, {
       title: meta.title,
       created: meta.created.toISOString(),
+      profile: meta.profile,
       ...(meta.assets ? { assets: meta.assets } : {}),
     });
     bytes = rendered.bytes;
     extra = `, ${rendered.slides} slide${rendered.slides === 1 ? "" : "s"}`;
   } else {
-    const rendered = await renderPdf(document, { title: meta.title, created: meta.created });
+    const rendered = await renderPdf(document, {
+      title: meta.title,
+      created: meta.created,
+      profile: meta.profile,
+    });
     bytes = rendered.bytes;
     extra = `, ${rendered.pages} page${rendered.pages === 1 ? "" : "s"}`;
   }
@@ -402,7 +441,8 @@ async function renderTo(
       {
         type: "text",
         text:
-          `Wrote ${meta.filename} (${bytes.byteLength.toLocaleString("en-US")} bytes${extra}) — ` +
+          `Wrote ${meta.filename} with the ${meta.profile} profile ` +
+          `(${bytes.byteLength.toLocaleString("en-US")} bytes${extra}) — ` +
           `${summarise(document)}. The file is attached and the caller delivers it to the user, ` +
           "so describe it rather than offering a link.",
       },

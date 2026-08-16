@@ -1,19 +1,16 @@
 /**
- * The one place a colour or a size is decided.
+ * The one place a colour, size or spacing is decided.
  *
- * Before this file the four renderers each carried their own literals, and they
- * had already drifted: the table border was `BFBFBF` in three of them and a
- * fourth grey in the PDF, the quote grey differed by a shade, and a level 1
- * heading was three different sizes in three formats.
+ * The four renderers read the same tokens so a profile retains its hierarchy,
+ * rhythm and contrast when the delivery format changes.
  *
- * **The palette is deliberately nobody's brand.** It used to be AgentDure's
- * indigo-violet, taken from the console — and a document handed to a customer,
- * a partner or a public office should not arrive dressed in its tooling's
- * colours. What replaced it is the *average* of what professional documents
- * already look like: a restrained corporate blue for structure and emphasis,
- * neutral near-black ink, quiet grey rules. Blue because it is the one hue
- * every reader has seen a thousand reports in — it signals "document", not
- * "product". The result should look designed and belong to no one.
+ * **The profiles are deliberately nobody's brand.** A document handed to a
+ * customer, a partner or a public office should not arrive dressed in its
+ * tooling's colours. Each profile instead makes a small set of editorial
+ * decisions for a specific reading context: restrained blues and teals for
+ * structure, neutral near-black ink, quiet grey rules, and geometry that
+ * ranges from formal to presentation-led. The result should look designed and
+ * belong to no one.
  *
  * What that means concretely:
  *
@@ -44,31 +41,204 @@
  * PDF wants three floats — `hashed` and `rgbOf` below do those two conversions
  * so the values themselves are stated once.
  */
-export const PALETTE = {
-  /** Deep corporate blue. Filled surfaces: a table header, a section slide. */
+export const DOCUMENT_PROFILES = [
+  "executive",
+  "consulting",
+  "formal",
+  "technical",
+  "standard",
+] as const;
+
+export type DocumentProfile = (typeof DOCUMENT_PROFILES)[number];
+
+export const DEFAULT_PROFILE: DocumentProfile = "executive";
+
+export interface Palette {
+  readonly brand: string;
+  readonly brandLight: string;
+  readonly brandDeep: string;
+  readonly brandTint: string;
+  readonly surfaceTint: string;
+  readonly ink: string;
+  readonly inkMuted: string;
+  readonly rule: string;
+  readonly onBrand: string;
+  readonly positive: string;
+  readonly negative: string;
+}
+
+export interface DesignProfile {
+  readonly profile: DocumentProfile;
+  readonly label: string;
+  readonly description: string;
+  readonly palette: Palette;
+  readonly chart: readonly string[];
+  readonly table: {
+    readonly headerFill: string;
+    readonly headerText: string;
+  };
+  readonly doc: {
+    readonly coverRulePoints: number;
+  };
+  readonly deck: {
+    readonly coverBandPoints: number;
+    readonly cardRadius: number;
+  };
+}
+
+const STANDARD_PALETTE: Palette = {
   brand: "1F4E79",
-  /** The lighter working blue. Rules, accents, quote bars, chapter ordinals. */
   brandLight: "4472C4",
-  /** Links, which need to stay legible as small underlined text. */
   brandDeep: "0563C1",
-  /** Barely-blue ground. Zebra rows, code blocks, cards. */
   brandTint: "EEF3F9",
-  /** Covers and section slides only — never a body page. */
   surfaceTint: "F4F6F9",
-  /** Neutral near-black. */
   ink: "212529",
-  /** Sub-heads, captions, sources, quotes. */
   inkMuted: "595959",
-  /** Hairlines: table rules, the line under a heading, a horizontal rule. */
   rule: "D9DEE5",
-  /** Anything on a brand-filled surface. */
   onBrand: "FFFFFF",
-  /** Universal signal colours, validated for colour-vision deficiency. */
   positive: "1BAF7A",
   negative: "E34948",
-} as const;
+};
 
-export type ColourName = keyof typeof PALETTE;
+const EXECUTIVE_PALETTE: Palette = {
+  brand: "17324D",
+  brandLight: "2D6A78",
+  brandDeep: "0B5D7A",
+  brandTint: "EAF1F3",
+  surfaceTint: "F5F7F8",
+  ink: "18222B",
+  inkMuted: "4F5D68",
+  rule: "CBD5DB",
+  onBrand: "FFFFFF",
+  positive: "147D64",
+  negative: "B8433F",
+};
+
+const CONSULTING_PALETTE: Palette = {
+  brand: "0B2D4D",
+  brandLight: "007481",
+  brandDeep: "005A8D",
+  brandTint: "E7F3F4",
+  surfaceTint: "F2F6F8",
+  ink: "17232D",
+  inkMuted: "52616D",
+  rule: "C9D5DB",
+  onBrand: "FFFFFF",
+  positive: "147D64",
+  negative: "B8433F",
+};
+
+const FORMAL_PALETTE: Palette = {
+  brand: "334E68",
+  brandLight: "627D98",
+  brandDeep: "245B78",
+  brandTint: "EDF1F4",
+  surfaceTint: "F7F7F5",
+  ink: "20252A",
+  inkMuted: "525A61",
+  rule: "CDD2D6",
+  onBrand: "FFFFFF",
+  positive: "287A62",
+  negative: "A94743",
+};
+
+const TECHNICAL_PALETTE: Palette = {
+  brand: "0F4C5C",
+  brandLight: "147D75",
+  brandDeep: "075A72",
+  brandTint: "E8F3F1",
+  surfaceTint: "F2F7F6",
+  ink: "162629",
+  inkMuted: "4C6063",
+  rule: "C6D6D3",
+  onBrand: "FFFFFF",
+  positive: "147D64",
+  negative: "B8433F",
+};
+
+const CATEGORICAL = [
+  "2A78D6",
+  "EB6834",
+  "1BAF7A",
+  "EDA100",
+  "E87BA4",
+  "4A3AA7",
+  "E34948",
+  "898781",
+] as const;
+
+function profile(
+  name: DocumentProfile,
+  label: string,
+  description: string,
+  palette: Palette,
+  options: {
+    header: "solid" | "light";
+    coverRulePoints: number;
+    coverBandPoints: number;
+    cardRadius: number;
+  },
+): DesignProfile {
+  return {
+    profile: name,
+    label,
+    description,
+    palette,
+    chart: CATEGORICAL,
+    table: {
+      headerFill: options.header === "solid" ? palette.brand : palette.brandTint,
+      headerText: options.header === "solid" ? palette.onBrand : palette.brand,
+    },
+    doc: { coverRulePoints: options.coverRulePoints },
+    deck: { coverBandPoints: options.coverBandPoints, cardRadius: options.cardRadius },
+  };
+}
+
+export const DESIGNS: Readonly<Record<DocumentProfile, DesignProfile>> = {
+  executive: profile(
+    "executive",
+    "Executive",
+    "Leadership decisions, board reports and approval documents.",
+    EXECUTIVE_PALETTE,
+    { header: "solid", coverRulePoints: 48, coverBandPoints: 12, cardRadius: 1500 },
+  ),
+  consulting: profile(
+    "consulting",
+    "Consulting",
+    "Strategy proposals and conclusion-led presentations.",
+    CONSULTING_PALETTE,
+    { header: "solid", coverRulePoints: 72, coverBandPoints: 36, cardRadius: 5000 },
+  ),
+  formal: profile(
+    "formal",
+    "Formal",
+    "Public-sector and external submissions designed first for print.",
+    FORMAL_PALETTE,
+    { header: "light", coverRulePoints: 36, coverBandPoints: 0, cardRadius: 0 },
+  ),
+  technical: profile(
+    "technical",
+    "Technical",
+    "Architecture, RFC and engineering documents with restrained structure.",
+    TECHNICAL_PALETTE,
+    { header: "light", coverRulePoints: 42, coverBandPoints: 6, cardRadius: 1000 },
+  ),
+  standard: profile(
+    "standard",
+    "Standard",
+    "The classic neutral corporate document style.",
+    STANDARD_PALETTE,
+    { header: "solid", coverRulePoints: 60, coverBandPoints: 21.6, cardRadius: 8000 },
+  ),
+};
+
+export function designFor(profileName: DocumentProfile = DEFAULT_PROFILE): DesignProfile {
+  return DESIGNS[profileName];
+}
+
+export const PALETTE = designFor().palette;
+
+export type ColourName = keyof Palette;
 
 /**
  * A categorical chart palette, validated for colour-vision
@@ -81,20 +251,11 @@ export type ColourName = keyof typeof PALETTE;
  * slots; `#008300` is dropped for being a second green, and the order is kept
  * otherwise.
  */
-export const CHART = [
-  "2A78D6",
-  "EB6834",
-  "1BAF7A",
-  "EDA100",
-  "E87BA4",
-  "4A3AA7",
-  "E34948",
-  "898781",
-] as const;
+export const CHART = designFor().chart;
 
 /** `#RRGGBB`, which is the form HWPX and the OOXML `srgbClr` attribute want. */
-export function hashed(name: ColourName): string {
-  return `#${PALETTE[name]}`;
+export function hashed(name: ColourName, palette: Palette = PALETTE): string {
+  return `#${palette[name]}`;
 }
 
 /**
@@ -104,8 +265,8 @@ export function hashed(name: ColourName): string {
  * three renderers that have no business loading `pdf-lib`, and the PDF one
  * wraps it in a single call at the point of use.
  */
-export function rgbOf(name: ColourName): { r: number; g: number; b: number } {
-  const hex = PALETTE[name];
+export function rgbOf(name: ColourName, palette: Palette = PALETTE): { r: number; g: number; b: number } {
+  const hex = palette[name];
   return {
     r: parseInt(hex.slice(0, 2), 16) / 255,
     g: parseInt(hex.slice(2, 4), 16) / 255,
@@ -121,12 +282,9 @@ export function rgbOf(name: ColourName): { r: number; g: number; b: number } {
  * Both are in **points**, which is the only unit all four formats can be
  * derived from, and the converters below do the deriving.
  *
- * The three document renderers did not agree before this: DOCX set a level 1
- * heading at 16pt, HWPX at 18pt and the PDF at 20pt, and the body was 11pt in
- * two of them and 10pt in the third. The same Markdown produced three documents
- * of visibly different weight, which is exactly what a shared scale is for. The
- * PDF's is the one kept — it is the format whose output was laid out against a
- * real page rather than against a default.
+ * Every page renderer uses `DOC`; the deck uses `DECK` because a projected
+ * screen is read from a different distance. Shared role names keep the same
+ * information hierarchy while allowing those two media to use honest sizes.
  */
 export const DOC = {
   body: 11,
@@ -168,6 +326,40 @@ export const DECK = {
   metricLabel: 13,
   /** A pulled quote, set alone: bigger than body, smaller than a title. */
   quote: 24,
+} as const;
+
+/**
+ * Leading is role-based rather than format-default-based.
+ *
+ * Korean body copy needs more air than Latin prose, while display text needs
+ * tighter lines so a wrapped title reads as one unit. Slides are read at a
+ * distance and use a slightly denser body rhythm than printed pages. `compact`
+ * is for tables and code, where rows already supply additional separation.
+ */
+export const LEADING = {
+  document: {
+    body: 1.5,
+    heading: 1.2,
+    coverTitle: 1.15,
+    subtitle: 1.4,
+    compact: 1.35,
+  },
+  deck: {
+    body: 1.35,
+    title: 1.15,
+    coverTitle: 1.1,
+    subtitle: 1.3,
+  },
+} as const;
+
+/**
+ * Preserve each installed font's native glyph widths. Kerning is allowed from
+ * 12pt upward, where Latin display text benefits from it; Hangul remains on
+ * its natural square advance. No renderer compresses text to make it fit.
+ */
+export const TYPOGRAPHY = {
+  tracking: 0,
+  kerningFromPoints: 12,
 } as const;
 
 /* -------------------------------------------------------------- converters */

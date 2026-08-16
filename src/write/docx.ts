@@ -44,7 +44,15 @@ import {
   type Metric,
   type Semantic,
 } from "./semantics.js";
-import { DOC, PALETTE, halfPoints } from "./theme.js";
+import {
+  DOC,
+  LEADING,
+  TYPOGRAPHY,
+  designFor,
+  halfPoints,
+  type DesignProfile,
+  type DocumentProfile,
+} from "./theme.js";
 import { PRODUCER } from "../version.js";
 
 /** A4, in twentieths of a point, with a 2.5cm margin. */
@@ -69,9 +77,6 @@ const TABLE_WIDTH = 11906 - 1418 * 2;
 
 /** How far down the page the cover's title sits: a third, in twentieths. */
 const COVER_DROP = 4200;
-/** The cover's short brand rule: everything right of this indent is not drawn. */
-const COVER_RULE_INDENT = 8000;
-
 /** 635 EMU to the twentieth of a point, which is how a picture meets the page. */
 const EMU_PER_TWIP = 635;
 
@@ -148,7 +153,10 @@ class Renderer {
   /** `wp:docPr` ids, which Word wants unique across the document. */
   private nextDrawingId = 1;
 
-  constructor(private readonly assets: Record<string, ImageAsset> = {}) {}
+  constructor(
+    private readonly assets: Record<string, ImageAsset> = {},
+    private readonly design: DesignProfile = designFor(),
+  ) {}
 
   private relationshipFor(kind: DocRelationship["kind"], target: string): string {
     let index = this.rels.findIndex((rel) => rel.kind === kind && rel.target === target);
@@ -235,7 +243,11 @@ class Renderer {
       // Zebra on alternate data rows. Counted from the header so the first data
       // row is the plain one — a tint immediately under a filled header reads as
       // the header being two rows tall.
-      const fill = header ? PALETTE.brand : row % 2 === 0 ? PALETTE.brandTint : undefined;
+      const fill = header
+        ? this.design.table.headerFill
+        : row % 2 === 0
+          ? this.design.palette.brandTint
+          : undefined;
       return (
         `<w:tc><w:tcPr><w:tcW w:w="${widths[column]}" w:type="dxa"/>` +
         (fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : "") +
@@ -244,8 +256,9 @@ class Renderer {
         // an empty cell still gets an empty paragraph.
         this.paragraph(
           header ? runs.map((run) => ({ ...run, bold: true })) : runs,
-          justification(block.align[column]),
-          header ? PALETTE.onBrand : undefined,
+          justification(block.align[column]) +
+            `<w:spacing w:line="${Math.round(240 * LEADING.document.compact)}" w:lineRule="auto"/>`,
+          header ? this.design.table.headerText : undefined,
         ) +
         "</w:tc>"
       );
@@ -262,7 +275,7 @@ class Renderer {
     // table by its rows, and the vertical lines are doing no work the column
     // gaps are not already doing.
     const edge = (name: string): string =>
-      `<w:${name} w:val="single" w:sz="4" w:color="${PALETTE.rule}"/>`;
+      `<w:${name} w:val="single" w:sz="4" w:color="${this.design.palette.rule}"/>`;
     const borders =
       "<w:tblBorders>" +
       edge("top") +
@@ -296,19 +309,24 @@ class Renderer {
   cover(title: readonly Run[], subtitle: readonly Run[] | undefined): string {
     const rule =
       `<w:p><w:pPr><w:spacing w:before="${COVER_DROP}" w:after="160"/>` +
-      `<w:ind w:right="${COVER_RULE_INDENT}"/>` +
-      `<w:pBdr><w:bottom w:val="single" w:sz="24" w:space="1" w:color="${PALETTE.brand}"/></w:pBdr>` +
+      `<w:ind w:right="${TABLE_WIDTH - Math.round(this.design.doc.coverRulePoints * 20)}"/>` +
+      `<w:pBdr><w:bottom w:val="single" w:sz="24" w:space="1" w:color="${this.design.palette.brand}"/></w:pBdr>` +
       "</w:pPr></w:p>";
     const titleParagraph = this.paragraph(
       title,
       '<w:pStyle w:val="Heading1"/>' +
         '<w:pBdr><w:bottom w:val="none" w:sz="0" w:space="0"/></w:pBdr>' +
-        '<w:spacing w:before="0" w:after="240"/>',
-      PALETTE.ink,
+        `<w:spacing w:before="0" w:after="240" w:line="${Math.round(240 * LEADING.document.coverTitle)}" w:lineRule="auto"/>`,
+      this.design.palette.ink,
       halfPoints(DOC.coverTitle),
     );
     const subtitleParagraph = subtitle
-      ? this.paragraph(subtitle, '<w:spacing w:after="0"/>', PALETTE.inkMuted, halfPoints(DOC.subtitle))
+      ? this.paragraph(
+          subtitle,
+          `<w:spacing w:after="0" w:line="${Math.round(240 * LEADING.document.subtitle)}" w:lineRule="auto"/>`,
+          this.design.palette.inkMuted,
+          halfPoints(DOC.subtitle),
+        )
       : "";
     return rule + titleParagraph + subtitleParagraph + '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
   }
@@ -335,8 +353,8 @@ class Renderer {
     const heading = this.paragraph(
       [{ text: label, bold: true }],
       '<w:spacing w:before="0" w:after="240"/>' +
-        `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="${PALETTE.brandLight}"/></w:pBdr>`,
-      PALETTE.brand,
+        `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="${this.design.palette.brandLight}"/></w:pBdr>`,
+      this.design.palette.brand,
       halfPoints(DOC.headings[0]),
     );
     // A multi-paragraph field cannot be a `fldSimple`, which is a run-level
@@ -353,7 +371,9 @@ class Renderer {
         const properties =
           `<w:pPr><w:spacing w:after="60"/><w:ind w:left="${(entry.level - 1) * INDENT_STEP}"/></w:pPr>`;
         const colour =
-          entry.level === 1 ? "" : `<w:rPr><w:color w:val="${PALETTE.inkMuted}"/></w:rPr>`;
+          entry.level === 1
+            ? ""
+            : `<w:rPr><w:color w:val="${this.design.palette.inkMuted}"/></w:rPr>`;
         // Plain text, not the heading's runs: a bold word mid-heading is
         // emphasis in the body, noise in a list of contents.
         const text = textElement(entry.runs.map((run) => run.text).join(""));
@@ -379,7 +399,7 @@ class Renderer {
     return this.paragraph(
       [{ text: String(ordinal).padStart(2, "0"), bold: true }],
       `${breakBefore ? "<w:pageBreakBefore/>" : ""}<w:spacing w:before="0" w:after="0"/>`,
-      PALETTE.brandLight,
+      this.design.palette.brandLight,
       halfPoints(DOC.ordinal),
     );
   }
@@ -426,7 +446,7 @@ class Renderer {
       this.paragraph(
         figure.caption,
         '<w:jc w:val="center"/><w:spacing w:after="240"/>',
-        PALETTE.inkMuted,
+        this.design.palette.inkMuted,
         halfPoints(DOC.caption),
       )
     );
@@ -457,7 +477,7 @@ class Renderer {
       case "rule":
         return this.paragraph(
           [],
-          `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${PALETTE.rule}"/></w:pBdr>`,
+          `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${this.design.palette.rule}"/></w:pBdr>`,
         );
       case "directive": {
         // A named semantic the author asked for gets its page treatment; the
@@ -491,13 +511,13 @@ class Renderer {
           this.paragraph(
             [{ text: metric.value, bold: true }],
             '<w:jc w:val="center"/><w:spacing w:after="40"/>',
-            PALETTE.brand,
+            this.design.palette.brand,
             halfPoints(DOC.metric),
           ) +
           this.paragraph(
             metric.label,
             '<w:jc w:val="center"/>',
-            PALETTE.inkMuted,
+            this.design.palette.inkMuted,
             halfPoints(DOC.caption),
           ) +
           "</w:tc>",
@@ -588,9 +608,9 @@ function settingsXml(): string {
 }
 
 /** The running head: the document's name, quietly, on every page but the cover. */
-function headerXml(title: string): string {
+function headerXml(title: string, design: DesignProfile): string {
   const properties =
-    `<w:rPr><w:color w:val="${PALETTE.inkMuted}"/><w:sz w:val="${halfPoints(DOC.caption)}"/></w:rPr>`;
+    `<w:rPr><w:color w:val="${design.palette.inkMuted}"/><w:sz w:val="${halfPoints(DOC.caption)}"/></w:rPr>`;
   return (
     `<w:hdr xmlns:w="${W}" xmlns:r="${R}"><w:p>` +
     '<w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr>' +
@@ -607,9 +627,9 @@ function headerXml(title: string): string {
  * does not decide — text reflows to the reader's fonts, and a number written
  * here would be wrong the first time it did.
  */
-function footerXml(): string {
+function footerXml(design: DesignProfile): string {
   const properties =
-    `<w:rPr><w:color w:val="${PALETTE.inkMuted}"/><w:sz w:val="${halfPoints(DOC.caption)}"/></w:rPr>`;
+    `<w:rPr><w:color w:val="${design.palette.inkMuted}"/><w:sz w:val="${halfPoints(DOC.caption)}"/></w:rPr>`;
   return (
     `<w:ftr xmlns:w="${W}" xmlns:r="${R}"><w:p>` +
     '<w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr>' +
@@ -619,20 +639,20 @@ function footerXml(): string {
   );
 }
 
-function stylesXml(korean: boolean): string {
-  // Levels 1 and 2 carry a hairline under them. It is the whole of what the
-  // a full-bleed tint would cost here: it is ink on every
-  // page and survives no photocopier, and a rule in the brand colour says the
-  // same thing in a hundredth of the area.
+function stylesXml(korean: boolean, design: DesignProfile): string {
+  // Levels 1 and 2 carry a hairline instead of a full-bleed tint: it preserves
+  // the hierarchy on screen, in print and through a photocopier with a
+  // hundredth of the ink.
   const underline =
-    `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="${PALETTE.brandLight}"/></w:pBdr>`;
+    `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="${design.palette.brandLight}"/></w:pBdr>`;
   const heading = (level: number): string =>
     `<w:style w:type="paragraph" w:styleId="Heading${level}">` +
     `<w:name w:val="heading ${level}"/><w:basedOn w:val="Normal"/>` +
-    `<w:pPr><w:keepNext/><w:spacing w:before="${level === 1 ? 240 : 200}" w:after="80"/>` +
+    `<w:pPr><w:keepNext/><w:spacing w:before="${level === 1 ? 240 : 200}" w:after="80" ` +
+    `w:line="${Math.round(240 * LEADING.document.heading)}" w:lineRule="auto"/>` +
     (level <= 2 ? underline : "") +
     `<w:outlineLvl w:val="${level - 1}"/></w:pPr>` +
-    `<w:rPr><w:b/><w:color w:val="${PALETTE.brand}"/>` +
+    `<w:rPr><w:b/><w:color w:val="${design.palette.brand}"/>` +
     `<w:sz w:val="${halfPoints(DOC.headings[level - 1] ?? DOC.body)}"/></w:rPr></w:style>`;
   return (
     `<w:styles xmlns:w="${W}">` +
@@ -646,13 +666,14 @@ function stylesXml(korean: boolean): string {
     (korean
       ? '<w:rFonts w:asciiTheme="minorEastAsia" w:hAnsiTheme="minorEastAsia" w:eastAsiaTheme="minorEastAsia"/>'
       : "") +
-    `<w:color w:val="${PALETTE.ink}"/>` +
+    `<w:color w:val="${design.palette.ink}"/>` +
     `<w:sz w:val="${halfPoints(DOC.body)}"/>` +
+    `<w:spacing w:val="${TYPOGRAPHY.tracking}"/><w:kern w:val="${halfPoints(TYPOGRAPHY.kerningFromPoints)}"/>` +
     // Every run states its east-Asian language once, here, when the document
     // has Korean in it — the run-level half of what `settingsXml` says.
     (korean ? '<w:lang w:val="en-US" w:eastAsia="ko-KR"/>' : "") +
     "</w:rPr></w:rPrDefault>" +
-    '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
+    `<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="${Math.round(240 * LEADING.document.body)}" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>` +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
     [1, 2, 3, 4, 5, 6].map(heading).join("") +
     // A quote is a callout: the brand bar on the left, the tint behind it —
@@ -661,19 +682,19 @@ function stylesXml(korean: boolean): string {
     // as one device.
     '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/>' +
     '<w:pPr><w:ind w:left="720" w:right="360"/><w:spacing w:before="120" w:after="160"/>' +
-    `<w:shd w:val="clear" w:color="auto" w:fill="${PALETTE.brandTint}"/>` +
-    `<w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="${PALETTE.brandLight}"/></w:pBdr></w:pPr>` +
-    `<w:rPr><w:i/><w:color w:val="${PALETTE.inkMuted}"/></w:rPr></w:style>` +
+    `<w:shd w:val="clear" w:color="auto" w:fill="${design.palette.brandTint}"/>` +
+    `<w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="${design.palette.brandLight}"/></w:pBdr></w:pPr>` +
+    `<w:rPr><w:i/><w:color w:val="${design.palette.inkMuted}"/></w:rPr></w:style>` +
     '<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/>' +
-    '<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="360"/>' +
-    `<w:shd w:val="clear" w:color="auto" w:fill="${PALETTE.brandTint}"/></w:pPr>` +
+    `<w:pPr><w:spacing w:after="0" w:line="${Math.round(240 * LEADING.document.compact)}" w:lineRule="auto"/><w:ind w:left="360"/>` +
+    `<w:shd w:val="clear" w:color="auto" w:fill="${design.palette.brandTint}"/></w:pPr>` +
     '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>' +
     `<w:sz w:val="${halfPoints(DOC.code)}"/></w:rPr></w:style>` +
     '<w:style w:type="character" w:styleId="CodeChar"><w:name w:val="Code Char"/>' +
     '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>' +
-    `<w:sz w:val="${halfPoints(DOC.code)}"/><w:color w:val="${PALETTE.brandDeep}"/></w:rPr></w:style>` +
+    `<w:sz w:val="${halfPoints(DOC.code)}"/><w:color w:val="${design.palette.brandDeep}"/></w:rPr></w:style>` +
     '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/>' +
-    `<w:rPr><w:color w:val="${PALETTE.brandDeep}"/><w:u w:val="single"/></w:rPr></w:style>` +
+    `<w:rPr><w:color w:val="${design.palette.brandDeep}"/><w:u w:val="single"/></w:rPr></w:style>` +
     "</w:styles>"
   );
 }
@@ -769,12 +790,14 @@ export interface DocxOptions {
   title: string;
   /** ISO 8601, passed in so the bytes are a function of the input alone. */
   created: string;
+  profile?: DocumentProfile;
   /** Keyed by the name `asset://name` references. */
   assets?: Record<string, ImageAsset>;
 }
 
 export function renderDocx(document: MarkdownDocument, options: DocxOptions): Uint8Array {
-  const renderer = new Renderer(options.assets);
+  const design = designFor(options.profile);
+  const renderer = new Renderer(options.assets, design);
   // Before the relationships and media parts: rendering is what discovers
   // the hyperlinks and the pictures.
   const body = documentXml(document, renderer);
@@ -788,9 +811,9 @@ export function renderDocx(document: MarkdownDocument, options: DocxOptions): Ui
     "docProps/app.xml": part(appPropertiesXml()),
     "word/document.xml": part(body),
     "word/_rels/document.xml.rels": part(documentRelsXml(renderer.relationships(), korean)),
-    "word/styles.xml": part(stylesXml(korean)),
-    "word/footer1.xml": part(footerXml()),
-    "word/header1.xml": part(headerXml(options.title)),
+    "word/styles.xml": part(stylesXml(korean, design)),
+    "word/footer1.xml": part(footerXml(design)),
+    "word/header1.xml": part(headerXml(options.title, design)),
   };
   if (korean) {
     parts["word/settings.xml"] = part(settingsXml());
