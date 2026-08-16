@@ -123,17 +123,6 @@ export const CODE_SIZE = centiPoints(DECK.code);
 /** Headings 3 to 6, which stay in the body rather than opening a slide. */
 export const SUBHEADING_SIZES = DECK.subheadings.map(centiPoints);
 
-/**
- * The bar under a slide's title.
- *
- * A deck is the one output
- * that can afford a full-bleed tint — a slide is shown, not printed by the
- * hundred — so the cover and section slides take the tint, and every ordinary
- * slide gets this instead: a short brand rule under the title, which says the
- * same thing without putting a colour field behind every bullet.
- */
-export const TITLE_RULE = { width: emu(48), height: emu(3), gap: emu(6) };
-
 /** The slide-number box, sitting in the bottom margin. */
 export const NUMBER_BOX = { width: emu(48), height: emu(16) };
 

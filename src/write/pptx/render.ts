@@ -73,7 +73,6 @@ import {
   TIMELINE_WHAT_BOX,
   TIMELINE_WHEN_BOX,
   TITLE_BOX,
-  TITLE_RULE,
   TITLE_SIZE,
   linesOf,
 } from "./layout.js";
@@ -344,27 +343,6 @@ export class Renderer {
     );
   }
 
-  /** The short brand rule under a content slide's title. */
-  private accentBar(y: number): string {
-    const id = this.nextId;
-    this.nextId += 1;
-    return (
-      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Accent ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
-      `<p:spPr><a:xfrm><a:off x="${SIDE_MARGIN}" y="${y}"/>` +
-      `<a:ext cx="${TITLE_RULE.width}" cy="${TITLE_RULE.height}"/></a:xfrm>` +
-      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
-      `<a:solidFill><a:srgbClr val="${this.design.palette.brand}"/></a:solidFill>` +
-      "</p:spPr>" +
-      // The empty body is not optional in practice. `p:txBody` is `minOccurs="0"`
-      // in the schema, and PowerPoint still calls a `p:sp` without one damaged
-      // and offers to repair the file. The empty `a:p` it carries is what every
-      // text extractor reads as a blank line, which is why this shape and the
-      // slide number are written last — `read/pptx.ts` drops trailing blanks.
-      "<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang=\"en-US\"/></a:p></p:txBody>" +
-      "</p:sp>"
-    );
-  }
-
   /** Pieces stacked into shapes from `startY` down. Text shares boxes; tables get frames. */
   private stack(
     shapes: string[],
@@ -503,7 +481,7 @@ export class Renderer {
     );
   }
 
-  /** What every titled slide on the content layout gets: title, bar, number. */
+  /** What every titled slide on the content layout gets: title and number. */
   private contentChrome(
     title: readonly Run[],
     index: number,
@@ -518,7 +496,6 @@ export class Renderer {
         leading: LEADING.deck.title,
       }),
     );
-    decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
     decorations.push(this.slideNumber(index + 1, this.design.palette.inkMuted));
   }
 
@@ -910,9 +887,6 @@ export class Renderer {
               leading: LEADING.deck.title,
             }),
           );
-          // The one brand mark a content slide carries itself: the layout
-          // cannot know whether a slide has a title to underline.
-          decorations.push(this.accentBar(TITLE_BOX.y + TITLE_BOX.height + TITLE_RULE.gap));
         }
         this.stack(shapes, slide.pieces, BODY_BOX.y);
         decorations.push(this.slideNumber(index + 1, this.design.palette.inkMuted));

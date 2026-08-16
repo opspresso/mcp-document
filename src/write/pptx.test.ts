@@ -228,7 +228,6 @@ test("a column asked to be set right is set right", () => {
 test("every shape carries a text body, empty or not", () => {
   // `p:txBody` is `minOccurs="0"` in the schema and mandatory in practice:
   // PowerPoint calls a `p:sp` without one damaged and offers to repair the file.
-  // The accent bar under a title was written without one and did exactly that.
   const slide = partOf(build("# 표지\n\n## 본문\n\n내용"), "ppt/slides/slide2.xml");
   assert.equal(
     /<p:sp>(?:(?!<\/p:sp>|<p:txBody>)[\s\S])*<\/p:sp>/.test(slide),
@@ -514,6 +513,21 @@ test("the divider's ground and the cover's band are layout furniture, not slide 
   assert.ok(partOf(bytes, "ppt/slideLayouts/slideLayout3.xml").includes('<p:bg>'));
   assert.equal(partOf(bytes, "ppt/slides/slide2.xml").includes("<p:bg>"), false);
   assert.ok(partOf(bytes, "ppt/slideLayouts/slideLayout1.xml").includes('name="Band"'));
+});
+
+test("accent rules belong to transition layouts, never content slides", () => {
+  const plain = partOf(build("## 결론\n\n본문"), "ppt/slides/slide1.xml");
+  const comparison = partOf(
+    build("## A vs B\n\n### A\n\n- 하나\n\n### B\n\n- 둘"),
+    "ppt/slides/slide1.xml",
+  );
+  assert.equal(plain.includes('name="Accent '), false);
+  assert.equal(comparison.includes('name="Accent '), false);
+
+  const layouts = build("# 표지\n\n# 장\n\n## 감사합니다");
+  for (const index of [1, 3, 4]) {
+    assert.match(partOf(layouts, `ppt/slideLayouts/slideLayout${index}.xml`), /name="Rule \d+"/);
+  }
 });
 
 test("a run of 한글 is labelled ko-KR, and Latin stays en-US", () => {

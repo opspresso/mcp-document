@@ -52,6 +52,10 @@ carry only their content, so editing one never means stepping around
 furniture — and this server's own reader, which reads only the slide parts,
 never sees the decoration.
 
+Short accent rules belong to the cover, section, and closing layouts. Content
+slides use title weight and whitespace instead, so a floating mark never
+competes with a table, comparison chip, or card.
+
 **What does not fit continues on the next slide.** The break prefers the last
 sub-heading on the slide — the topic moves whole, and its heading becomes the
 continuation's title (`아키텍처 — Control Plane`); only a break with no
