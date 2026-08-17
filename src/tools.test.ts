@@ -12,7 +12,7 @@
  */
 
 import { strict as assert } from "node:assert";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { parseMarkdown } from "./markdown.js";
 import { callTool, CONTENT_TYPES, PROFILES, summarise, TOOLS } from "./tools.js";
 import { renderDocx } from "./write/docx.js";
@@ -216,4 +216,41 @@ test("a deck that references an asset nobody sent is refused by name", async () 
     content: "## 그림\n\n![x](asset://ghost.png)",
   });
   assert.ok(result.isError && result.text.includes("asset://ghost.png"), result.text);
+});
+
+/** The `tool_call` lines written while `run` executes, parsed. */
+async function linesDuring(run: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
+  const write = mock.method(console, "log", () => {});
+  const complain = mock.method(console, "error", () => {});
+  try {
+    await run();
+    return write.mock.calls
+      .map((call) => JSON.parse(String(call.arguments[0])) as Record<string, unknown>)
+      .filter((line) => line.event === "tool_call");
+  } finally {
+    write.mock.restore();
+    complain.mock.restore();
+  }
+}
+
+test("every call leaves one line naming the tool and the format, never the content", async () => {
+  const lines = await linesDuring(async () => {
+    await call("render_document", { format: "docx", content: "# Report\n\nthe secret paragraph" });
+    await call("read_document", { filename: "Quarterly.HWP", content: base64(new Uint8Array([1, 2, 3])) });
+  });
+  assert.equal(lines.length, 2);
+
+  const [rendered, read] = lines;
+  assert.equal(rendered?.tool, "render_document");
+  assert.equal(rendered?.format, "docx");
+  assert.equal(rendered?.ok, true);
+  assert.equal(typeof rendered?.ms, "number");
+
+  // The read is refused, and a refusal is still a call — with the extension it
+  // was named by, lower-cased, so one format's failures group together.
+  assert.equal(read?.tool, "read_document");
+  assert.equal(read?.format, "hwp");
+  assert.equal(read?.ok, false);
+
+  assert.doesNotMatch(JSON.stringify(lines), /secret|Quarterly/);
 });

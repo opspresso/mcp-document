@@ -21,6 +21,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { authorizes, describeAuth } from "./auth.js";
 import { ConfigError, loadConfig, type Config } from "./config.js";
+import { logError } from "./log.js";
 import { buildServer } from "./mcp.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 
@@ -32,7 +33,7 @@ function send(response: ServerResponse, status: number, body: unknown): void {
 
 function start(config: Config): void {
   const mcp = toNodeHandler(
-    createMcpHandler(buildServer, { onerror: (error) => console.warn(`mcp: ${error.message}`) }),
+    createMcpHandler(buildServer, { onerror: (error) => logError("mcp_handler_failed", error) }),
   );
   const server = createServer((request, response) => {
     void (async () => {

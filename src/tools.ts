@@ -12,6 +12,7 @@
  * run's, and a JSON-RPC error would take the whole turn down with it.
  */
 
+import { extensionOf } from "./detect.js";
 import { DocumentError } from "./errors.js";
 import {
   asUntrustedContent,
@@ -20,6 +21,7 @@ import {
   MAX_MARKDOWN_CHARS,
   MAX_RENDERED_BYTES,
 } from "./limits.js";
+import { elapsedMs, logError, logInfo, logWarn } from "./log.js";
 import { parseMarkdown, withoutDirectives, type Block, type MarkdownDocument } from "./markdown.js";
 import { readDocument } from "./read/document.js";
 import { loadSource } from "./source.js";
@@ -223,7 +225,10 @@ async function read(args: Record<string, unknown>): Promise<ToolResult> {
     // The caller is told; without this line the operator is not, and a format
     // that started failing has no evidence behind it anywhere. A filename is
     // safe to log — unlike a URL, it carries no capability.
-    console.warn(`read_document failed: ${filename ?? "(unnamed)"} — ${describe(error)}`);
+    (error instanceof DocumentError ? logWarn : logError)("tool_failed", error, {
+      tool: "read_document",
+      filename,
+    });
     return failed(
       `Error: could not read the document — ${
         error instanceof DocumentError ? error.message : describe(error)
@@ -292,7 +297,10 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
 
     return await renderTo(format, document, { title, created, filename, assets, profile });
   } catch (error) {
-    console.warn(`render_document failed: ${format} — ${describe(error)}`);
+    (error instanceof DocumentError ? logWarn : logError)("tool_failed", error, {
+      tool: "render_document",
+      format,
+    });
     return failed(
       `Error: could not write the document — ${
         error instanceof DocumentError ? error.message : describe(error)
@@ -470,6 +478,32 @@ async function renderTo(
  * the storage removed the question.
  */
 export async function callTool(name: unknown, args: Record<string, unknown>): Promise<ToolResult> {
+  const started = performance.now();
+  const result = await dispatch(name, args);
+  // One line per call, whatever the outcome — the tool, the format, how long it
+  // took and whether it answered. Not the content: what was read or written is
+  // the caller's, and `log.ts` says why it never reaches a log line.
+  logInfo("tool_call", {
+    tool: String(name),
+    format: formatOf(name, args),
+    ms: elapsedMs(started),
+    ok: result.isError !== true,
+  });
+  return result;
+}
+
+/** The format a call was about, for its log line: requested of a writer, or named by a read file. */
+function formatOf(name: unknown, args: Record<string, unknown>): string | undefined {
+  if (name === "render_document") {
+    return typeof args.format === "string" ? args.format : undefined;
+  }
+  if (name === "read_document") {
+    return extensionOf(typeof args.filename === "string" ? args.filename : undefined);
+  }
+  return undefined;
+}
+
+async function dispatch(name: unknown, args: Record<string, unknown>): Promise<ToolResult> {
   if (name === "read_document") {
     return read(args);
   }

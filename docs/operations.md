@@ -28,6 +28,19 @@ only safe while nothing routes to it from outside the cluster —
     DELETE /mcp      session teardown; 204, since this server holds no session
     GET    /health   liveness
 
+The process logs one JSON line per event. Every tool call leaves a `tool_call`
+line on stdout — the tool, the format (requested of `render_document`, or the
+extension a `read_document` file was named by), how long it took and whether it
+answered (`ok`) — and a failure that reaches a tool is written to stderr as
+well, so a format that stopped parsing has evidence behind it: `warn` for a
+refusal written for the model (a format this does not read, a scan with no text
+layer), `error` for a bug or a timeout. Neither carries the document or the
+Markdown: they are the caller's, and a filename is the most a failure line
+names.
+
+    {"level":"info","event":"tool_call","tool":"render_document","format":"pptx","ms":640,"ok":true}
+    {"level":"warn","event":"tool_failed","message":"…","tool":"read_document","filename":"report.hwp"}
+
 A tag publishes a `linux/amd64` image to GHCR and to a private ECR mirror,
 creates a GitHub Release whose notes are the commit subjects, and dispatches the
 released version to the GitOps repository that deploys it. The image runs as the
