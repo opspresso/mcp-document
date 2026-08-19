@@ -181,7 +181,7 @@ function refuse(reason: string): Detection {
 /**
  * A format the caller already reads.
  *
- * PDF and plain text need nothing this server has that AgentDure does not: the
+ * PDF and plain text need nothing this server has that Agent Studio does not: the
  * app extracts both in-process, so routing one here would be a network round
  * trip to reach the same `unpdf`. Saying which formats *do* belong here is what
  * stops a caller from concluding the document is unreadable.
@@ -243,7 +243,7 @@ export function detect(
   }
   if (looksLikePdf(bytes)) {
     // Read by the caller, not here. This server is the office-format parser now:
-    // PDF and plain text need no dependency AgentDure does not already carry, so
+    // PDF and plain text need no dependency Agent Studio does not already carry, so
     // sending them over MCP would be a network round trip to reach `unpdf`.
     return refuse(READ_THERE("a PDF"));
   }

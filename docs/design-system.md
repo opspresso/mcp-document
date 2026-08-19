@@ -40,7 +40,7 @@ brand hairline under each heading does the work on every other page. Pure
 black is never used: near-black reads as ink, full black on a screen glares.
 
 **No font is named, in any format.** A face named here is a face the reader's
-machine may not have, and the substitute is then chosen by nobody. AgentDure's
+machine may not have, and the substitute is then chosen by nobody. Agent Studio's
 own faces make that worse rather than better — Figtree, Chakra Petch and
 JetBrains Mono carry no Hangul at all, so a Korean document set in them is a
 document set in whatever the system falls back to. Colour and layout carry the

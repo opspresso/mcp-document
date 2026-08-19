@@ -19,7 +19,7 @@ own first bytes is wrong about the file.
 | ODT / ODS / ODP | one `content.xml`, one reader — ODF marks structure the same way whichever kind it is |
 | RTF | control words, groups and escapes, with destinations (`\fonttbl`, `{\*\generator}`) skipped whole |
 
-PDF, plain text and HTML are the caller's: none needs a parser AgentDure lacks,
+PDF, plain text and HTML are the caller's: none needs a parser Agent Studio lacks,
 so routing one here would be a network round trip to reach the same library —
 and a second copy of the extraction to keep in step with the first.
 

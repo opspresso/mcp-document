@@ -12,7 +12,7 @@
  * more damaging claim than "I could not read it".
  *
  * Three formats, all of them office containers. PDF and plain text left with the
- * URL side: they need no parser AgentDure lacks, so routing one here was a
+ * URL side: they need no parser Agent Studio lacks, so routing one here was a
  * network round trip to reach the same `unpdf` — and a third copy of the
  * extraction to keep in step.
  */

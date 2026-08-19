@@ -12,7 +12,7 @@ page of replacement characters — or, once that was fixed, an omission notice:
 cannot be read here. Ask the server for a text representation.]
 ```
 
-The caller carries the bytes now. AgentDure stores what a tool returns beside
+The caller carries the bytes now. Agent Studio stores what a tool returns beside
 every other byte one of its runs produced, with one retention window, one
 gallery and one delete button — which is what makes a rendered document
 something a person can find again rather than a link that quietly expires.

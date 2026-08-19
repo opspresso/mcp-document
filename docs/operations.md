@@ -65,7 +65,7 @@ unprivileged `node` user and needs no writable volume:
 No `uv` or local command is required. Clients that only support local `stdio`
 servers need an HTTP-to-stdio bridge.
 
-## Register in AgentDure
+## Register in Agent Studio
 
 Tools → register with the URL ending in `/mcp` and a header
 `Authorization: Bearer <MCP_API_KEY>`. No tenant header: there is nothing left
@@ -73,5 +73,5 @@ to partition.
 
 `read_document` returns a `text` block, which flows straight into the
 turn. `render_document` returns a `resource` block carrying the bytes, which
-AgentDure stores as an artifact and delivers to the user — so the model should
+Agent Studio stores as an artifact and delivers to the user — so the model should
 describe what it wrote rather than offer a link.
