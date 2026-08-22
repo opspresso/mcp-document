@@ -50,6 +50,10 @@ ClusterIP with no ingress, where the network is the boundary. The process states
 which mode it is in among its startup lines, on every start. **If you expose it,
 set the key.**
 
+This endpoint has no browser caller, so any request carrying an `Origin` header
+is refused with 403. That keeps the Streamable HTTP transport's DNS-rebinding
+boundary explicit even while the Service remains cluster-internal.
+
 ## There is no tenant any more
 
 `render_document` required `x-document-tenant`, taken from the header rather than

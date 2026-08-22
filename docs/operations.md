@@ -25,7 +25,7 @@ only safe while nothing routes to it from outside the cluster —
     node dist/server.js                        # open — cluster-internal only
 
     POST   /mcp      JSON-RPC; Authorization: Bearer <MCP_API_KEY> when a key is set
-    DELETE /mcp      session teardown; 204, since this server holds no session
+    DELETE /mcp      405; this stateless server has no session to terminate
     GET    /health   liveness
 
 The process logs one JSON line per event. Every tool call leaves a `tool_call`

@@ -19,7 +19,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import { authorizes, describeAuth } from "./auth.js";
+import { authorizes, authorizesOrigin, describeAuth } from "./auth.js";
 import { ConfigError, loadConfig, type Config } from "./config.js";
 import { logError } from "./log.js";
 import { buildServer } from "./mcp.js";
@@ -44,11 +44,20 @@ function start(config: Config): void {
         send(response, 200, { status: "ok" });
         return;
       }
-      if (!path.startsWith("/mcp")) {
+      if (path !== "/mcp") {
         send(response, 404, { error: "not found" });
         return;
       }
+      if (!authorizesOrigin(request.headers.origin)) {
+        send(response, 403, {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32002, message: "browser origins are not allowed" },
+        });
+        return;
+      }
       if (!authorizes(config.apiKey, request.headers.authorization)) {
+        response.setHeader("www-authenticate", 'Bearer realm="mcp"');
         send(response, 401, {
           jsonrpc: "2.0",
           id: null,
