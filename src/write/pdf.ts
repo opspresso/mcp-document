@@ -35,10 +35,12 @@
 
 import { readFileSync } from "node:fs";
 import fontkit from "@pdf-lib/fontkit";
+import { DocumentError } from "../errors.js";
 import {
   degrees,
   PDFDocument,
   PDFFont,
+  PDFImage,
   PDFName,
   PDFPage,
   PDFString,
@@ -49,7 +51,14 @@ import {
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
 import { plainTextOf } from "../markdown.js";
 import { columnShares } from "./table.js";
-import { HANGUL, TOC_THRESHOLD, coverOf, tocEntriesOf } from "./semantics.js";
+import {
+  HANGUL,
+  TOC_THRESHOLD,
+  coverOf,
+  figureOf,
+  tocEntriesOf,
+  type Figure,
+} from "./semantics.js";
 import {
   DOC,
   LEADING,
@@ -61,6 +70,7 @@ import {
   type Palette,
 } from "./theme.js";
 import { PRODUCER } from "../version.js";
+import { imageSize, type ImageAsset } from "./image.js";
 
 /** A4 in points, and a 2cm margin. */
 const PAGE_WIDTH = 595.28;
@@ -146,6 +156,12 @@ interface Fonts {
   regular: PDFFont;
   bold: PDFFont;
   mono: PDFFont;
+}
+
+interface EmbeddedFigure {
+  image: PDFImage;
+  width: number;
+  height: number;
 }
 
 /** One drawable piece: a word, a run of spaces, or a single CJK character. */
@@ -248,6 +264,7 @@ class Writer {
   constructor(
     private readonly document: PDFDocument,
     private readonly fonts: Fonts,
+    private readonly images: ReadonlyMap<string, EmbeddedFigure>,
     private readonly design: DesignProfile = designFor(),
   ) {
     this.colours = coloursFor(design);
@@ -650,6 +667,45 @@ class Writer {
     this.space(PARAGRAPH_SPACE);
   }
 
+  private figure(figure: Figure): void {
+    const embedded = this.images.get(figure.asset);
+    if (!embedded) {
+      throw new DocumentError(
+        `the document references asset://${figure.asset} but no asset of that name was provided`,
+      );
+    }
+    const natural = { width: embedded.width * 0.75, height: embedded.height * 0.75 };
+    const scale = Math.min(1, CONTENT_WIDTH / natural.width, 430 / natural.height);
+    const width = natural.width * scale;
+    const height = natural.height * scale;
+    const captionLines = wrap(
+      figure.caption.flatMap((run) => atomsOf(run, this.fonts, CAPTION_SIZE)),
+      CONTENT_WIDTH,
+    );
+    const lineHeight = CAPTION_SIZE * LEADING.document.compact;
+    const captionHeight = captionLines.length * lineHeight;
+    const gap = captionHeight > 0 ? 8 : 0;
+
+    this.space(PARAGRAPH_SPACE);
+    this.reserve(height + gap + captionHeight);
+    this.page.drawImage(embedded.image, {
+      x: MARGIN + (CONTENT_WIDTH - width) / 2,
+      y: this.y + captionHeight + gap,
+      width,
+      height,
+    });
+    captionLines.forEach((line, index) => {
+      this.drawLine(
+        line,
+        MARGIN + (CONTENT_WIDTH - line.width) / 2,
+        CAPTION_SIZE,
+        this.y + captionHeight - (index + 1) * lineHeight + lineHeight * 0.25,
+        this.colours.muted,
+      );
+    });
+    this.space(PARAGRAPH_SPACE);
+  }
+
   block(block: Block): void {
     switch (block.kind) {
       case "heading": {
@@ -690,6 +746,10 @@ class Writer {
         return;
       }
       case "paragraph":
+        if (figureOf(block)) {
+          this.figure(figureOf(block)!);
+          return;
+        }
         this.paragraph(block.runs, { size: BODY_SIZE, left: MARGIN, width: CONTENT_WIDTH });
         this.space(PARAGRAPH_SPACE);
         return;
@@ -775,6 +835,8 @@ export interface PdfOptions {
   /** Passed in rather than read from the clock, so the bytes follow from the input. */
   created: Date;
   profile?: DocumentProfile;
+  /** Keyed by the name `asset://name` references. */
+  assets?: Record<string, ImageAsset>;
 }
 
 export interface RenderedPdf {
@@ -801,6 +863,22 @@ export function usesBold(document: MarkdownDocument): boolean {
   );
 }
 
+function figureAssets(blocks: readonly Block[]): Set<string> {
+  const names = new Set<string>();
+  for (const block of blocks) {
+    const figure = figureOf(block);
+    if (figure) {
+      names.add(figure.asset);
+    }
+    if (block.kind === "directive") {
+      for (const name of figureAssets(block.blocks)) {
+        names.add(name);
+      }
+    }
+  }
+  return names;
+}
+
 export async function renderPdf(
   document: MarkdownDocument,
   options: PdfOptions,
@@ -816,6 +894,21 @@ export async function renderPdf(
     bold: usesBold(document) ? await pdf.embedFont(bytes.bold, { subset: false }) : regular,
     mono: await pdf.embedFont(StandardFonts.Courier),
   };
+  const images = new Map<string, EmbeddedFigure>();
+  for (const name of figureAssets(document.blocks)) {
+    const asset = options.assets?.[name];
+    if (!asset) {
+      throw new DocumentError(
+        `the document references asset://${name} but no asset of that name was provided`,
+      );
+    }
+    const size = imageSize(asset.bytes, asset.mimeType);
+    const image =
+      asset.mimeType === "image/png"
+        ? await pdf.embedPng(asset.bytes)
+        : await pdf.embedJpg(asset.bytes);
+    images.set(name, { image, width: size.width, height: size.height });
+  }
   pdf.setTitle(options.title);
   // Both fields, because readers disagree about which one they show: Preview
   // reads `Creator`, most others `Producer`.
@@ -827,7 +920,7 @@ export async function renderPdf(
   const { cover, body } = coverOf(document.blocks);
   const toc = cover !== undefined && tocEntriesOf(body).length >= TOC_THRESHOLD;
 
-  const writer = new Writer(pdf, fonts, designFor(options.profile));
+  const writer = new Writer(pdf, fonts, images, designFor(options.profile));
   if (cover) {
     writer.cover(cover.title, cover.subtitle);
     if (toc) {

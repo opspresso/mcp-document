@@ -1,6 +1,6 @@
 /**
  * The parser every renderer is downstream of. A mistake here appears in all
- * three formats at once and looks like three separate bugs.
+ * four formats at once and looks like four separate bugs.
  */
 
 import { strict as assert } from "node:assert";

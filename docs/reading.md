@@ -12,7 +12,7 @@ own first bytes is wrong about the file.
 | Format | How |
 |---|---|
 | DOCX | `word/document.xml` only — headers, footers and footnotes would interleave running heads with prose at every page boundary |
-| XLSX | values from `xl/worksheets/*`, resolved through `xl/sharedStrings.xml`, one heading per sheet |
+| XLSX | cached values from `xl/worksheets/*`, resolved through `xl/sharedStrings.xml`, one heading per visible sheet |
 | PPTX | `ppt/slides/slide*.xml` in deck order, numbered; speaker notes left out |
 | HWPX | `Contents/section*.xml`, in numeric order |
 | HWP 5.x | OLE compound file → deflate per section → `HWPTAG_PARA_TEXT` records |
@@ -30,6 +30,18 @@ address, because empty cells are simply absent and emitting them in file order
 would shift every value into a column it does not belong to: a table that still
 looks like a table and says something else. And the budget is spent in whole
 rows, so a cut never leaves a line whose columns no longer line up.
+
+That simple read is intentionally lossy. Use `inspect_spreadsheet` when formulas,
+cell addresses, error cells, hidden sheets, external-link presence or macro
+presence matter. It never recalculates formulas, follows an external link or
+executes VBA. Hidden and very-hidden sheets are omitted unless explicitly
+requested. See [Spreadsheets](spreadsheets.md).
+
+Every read result also states `complete`, format-specific `omissions`, and
+available counts in `structuredContent`. Text extraction is content recovery,
+not original-preserving editing: styles, comments, tracked changes, speaker
+notes and similar parts may be omitted by design. Re-rendering extracted text
+creates a new document and does not preserve the source package.
 
 **RTF is here for a different reason from the rest.** It is a text file, so
 without a reader it is not refused — it is read as plain text and reaches the

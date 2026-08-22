@@ -14,29 +14,43 @@
 import { strict as assert } from "node:assert";
 import { mock, test } from "node:test";
 import { parseMarkdown } from "./markdown.js";
-import { callTool, CONTENT_TYPES, PROFILES, summarise, TOOLS } from "./tools.js";
+import {
+  callTool,
+  CONTENT_TYPES,
+  PROFILES,
+  summarise,
+  TOOLS,
+  XLSX_CONTENT_TYPE,
+} from "./tools.js";
 import { renderDocx } from "./write/docx.js";
+import { buildZip } from "./zip.js";
 
 async function call(
   name: string,
   args: Record<string, unknown>,
-): Promise<{ text: string; isError: boolean; file?: { mimeType: string; blob: string; uri: string } }> {
+): Promise<{
+  text: string;
+  isError: boolean;
+  structured?: Record<string, unknown>;
+  file?: { mimeType: string; blob: string; uri: string };
+}> {
   const result = await callTool(name, args);
   const first = result.content[0];
   const resource = result.content.find((block) => block.type === "resource");
   return {
     text: first?.type === "text" ? first.text : "",
     isError: result.isError === true,
+    ...(result.structuredContent ? { structured: result.structuredContent } : {}),
     ...(resource?.type === "resource" ? { file: resource.resource } : {}),
   };
 }
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
-test("both tools are offered with an object schema", () => {
+test("all tools are offered with an object schema", () => {
   assert.deepEqual(
     TOOLS.map((tool) => tool.name),
-    ["read_document", "render_document"],
+    ["read_document", "inspect_spreadsheet", "render_spreadsheet", "render_document"],
   );
   for (const tool of TOOLS) {
     assert.equal(tool.inputSchema.type, "object");
@@ -67,6 +81,23 @@ test("a document read inline comes back with its provenance stated", async () =>
   assert.match(text, /본문입니다\./);
 });
 
+test("read and render results expose machine-readable completeness and validation", async () => {
+  const docx = renderDocx(parseMarkdown("# 보고서\n\n본문입니다."), {
+    title: "보고서",
+    created: "2026-08-05T00:00:00Z",
+  });
+  const read = await call("read_document", { content: base64(docx), filename: "보고서.docx" });
+  assert.equal(read.structured?.sourceFormat, "docx");
+  assert.equal(read.structured?.complete, true);
+  assert.ok(Array.isArray(read.structured?.omissions));
+
+  const rendered = await call("render_document", { format: "docx", content: "# 보고서\n\n본문" });
+  const validation = rendered.structured?.validation as Record<string, unknown>;
+  assert.equal(validation.structure, "passed");
+  assert.equal(validation.content, "reopened");
+  assert.equal(validation.visual, "not_run");
+});
+
 test("a format this cannot read is refused with the format named", async () => {
   const { text, isError } = await call("read_document", {
     content: base64(new TextEncoder().encode("<html><body>hi</body></html>")),
@@ -91,6 +122,71 @@ test("a PDF is refused by name, pointing at who does read it", async () => {
   assert.equal(isError, true);
   assert.match(text, /this is a PDF, which the caller reads for itself/);
   assert.match(text, /DOCX, XLSX, PPTX, HWP, HWPX/);
+});
+
+test("spreadsheet inspection returns addressed formulas without executing hidden content", async () => {
+  const utf8 = (value: string) => new TextEncoder().encode(value);
+  const workbook = buildZip({
+    "xl/workbook.xml": utf8(
+      '<workbook><sheets><sheet name="Visible" sheetId="1" r:id="rId1"/>' +
+        '<sheet name="Hidden" sheetId="2" state="hidden" r:id="rId2"/></sheets></workbook>',
+    ),
+    "xl/_rels/workbook.xml.rels": utf8(
+      '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/>' +
+        '<Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>',
+    ),
+    "xl/worksheets/sheet1.xml": utf8(
+      '<worksheet><sheetData><row r="1"><c r="A1"><f>SUM(B1:C1)</f><v>42</v></c>' +
+        '</row></sheetData></worksheet>',
+    ),
+    "xl/worksheets/sheet2.xml": utf8(
+      '<worksheet><sheetData><row r="1"><c r="A1"><v>secret</v></c></row></sheetData></worksheet>',
+    ),
+  });
+  const result = await call("inspect_spreadsheet", {
+    content: base64(workbook),
+    filename: "model.xlsx",
+    mode: "both",
+  });
+  assert.equal(result.isError, false, result.text);
+  assert.match(result.text, /A1: =SUM\(B1:C1\) → 42/);
+  assert.doesNotMatch(result.text, /secret/);
+  assert.equal(result.structured?.hiddenSheets, 1);
+  assert.equal(result.structured?.complete, true);
+});
+
+test("a spreadsheet is created with explicit formulas and machine-readable validation", async () => {
+  const result = await call("render_spreadsheet", {
+    title: "예산",
+    sheets: [
+      {
+        name: "Summary",
+        rows: [
+          ["항목", "값"],
+          ["매출", 40],
+          ["비용", 10],
+          ["이익", { formula: "B2-B3", cachedValue: 30 }],
+          ["문자열", "=literal"],
+        ],
+      },
+    ],
+  });
+  assert.equal(result.isError, false, result.text);
+  assert.equal(result.file?.mimeType, XLSX_CONTENT_TYPE);
+  assert.match(result.file?.uri ?? "", /xlsx$/);
+  const counts = result.structured?.counts as Record<string, unknown>;
+  const validation = result.structured?.validation as Record<string, unknown>;
+  assert.equal(counts.formulas, 1);
+  assert.equal(validation.structure, "passed");
+  assert.equal(validation.content, "reopened");
+});
+
+test("spreadsheet creation refuses implicit and malformed formula objects", async () => {
+  const result = await call("render_spreadsheet", {
+    sheets: [{ name: "Data", rows: [[{ cachedValue: 1 }]] }],
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.text, /formula cell/);
 });
 
 test("nonsense base64 is a refusal, not bytes", async () => {
@@ -177,20 +273,21 @@ test("a deck comes back as a deck, and says how many slides it is", async () => 
   assert.match(text, /3 slides/);
 });
 
-test("assets ride with pptx and docx, and an SVG is turned away with the fix named", async () => {
+test("assets ride with pptx, docx and pdf, and an SVG is turned away with the fix named", async () => {
   const png = {
     mimeType: "image/png",
-    content: Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52,
-      0, 0, 0x02, 0x80, 0, 0, 0x01, 0x90, 8, 6, 0, 0, 0,
-    ]).toString("base64"),
+    content:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X4cSAAAAAElFTkSuQmCC",
   };
   const wrongFormat = await call("render_document", {
     format: "hwpx",
     content: "# 보고서",
     assets: { "a.png": png },
   });
-  assert.ok(wrongFormat.isError && wrongFormat.text.includes("pptx and docx only"), wrongFormat.text);
+  assert.ok(
+    wrongFormat.isError && wrongFormat.text.includes("pptx, docx and pdf only"),
+    wrongFormat.text,
+  );
 
   const svg = await call("render_document", {
     format: "pptx",
@@ -199,7 +296,7 @@ test("assets ride with pptx and docx, and an SVG is turned away with the fix nam
   });
   assert.ok(svg.isError && svg.text.includes("Rasterise"), svg.text);
 
-  for (const format of ["pptx", "docx"] as const) {
+  for (const format of ["pptx", "docx", "pdf"] as const) {
     const embedded = await call("render_document", {
       format,
       content: "## 구조도\n\n![전체 구조](asset://a.png)",

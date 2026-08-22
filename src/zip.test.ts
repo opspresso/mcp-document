@@ -11,7 +11,12 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { MAX_EXPANDED_BYTES, MAX_ZIP_ENTRIES } from "./limits.js";
+import {
+  MAX_COMPRESSION_RATIO,
+  MAX_EXPANDED_BYTES,
+  MAX_ZIP_ENTRIES,
+  MAX_ZIP_ENTRY_BYTES,
+} from "./limits.js";
 import { buildZip, checkBudget, listEntries, looksLikeZip, openZip, readEntries, stored, ZipError } from "./zip.js";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
@@ -69,6 +74,7 @@ test("an empty archive has nothing to read and says so", () => {
 test("too many entries is refused before any of them is inflated", () => {
   const entries = Array.from({ length: MAX_ZIP_ENTRIES + 1 }, (_, index) => ({
     name: `part${index}.xml`,
+    compressedSize: 1,
     originalSize: 1,
   }));
   assert.throws(() => checkBudget(entries), (error: unknown) =>
@@ -77,7 +83,10 @@ test("too many entries is refused before any of them is inflated", () => {
 
 test("a declared expansion past the budget is refused", () => {
   assert.throws(
-    () => checkBudget([{ name: "bomb.bin", originalSize: MAX_EXPANDED_BYTES + 1 }]),
+    () =>
+      checkBudget([
+        { name: "bomb.bin", compressedSize: MAX_EXPANDED_BYTES + 1, originalSize: MAX_EXPANDED_BYTES + 1 },
+      ]),
     (error: unknown) => error instanceof ZipError && /expands to/.test(error.message),
   );
   // Summed, not per entry: a thousand entries just under the limit each is the
@@ -87,6 +96,7 @@ test("a declared expansion past the budget is refused", () => {
       checkBudget(
         Array.from({ length: 200 }, (_, index) => ({
           name: `part${index}`,
+          compressedSize: MAX_EXPANDED_BYTES / 100,
           originalSize: MAX_EXPANDED_BYTES / 100,
         })),
       ),
@@ -94,16 +104,36 @@ test("a declared expansion past the budget is refused", () => {
   );
 });
 
+test("one oversized entry is refused independently of the archive total", () => {
+  assert.throws(
+    () =>
+      checkBudget([
+        { name: "huge.xml", compressedSize: MAX_ZIP_ENTRY_BYTES + 1, originalSize: MAX_ZIP_ENTRY_BYTES + 1 },
+      ]),
+    /per-entry limit/,
+  );
+});
+
+test("an extreme compression ratio is refused before inflation", () => {
+  assert.throws(
+    () =>
+      checkBudget([
+        { name: "bomb.xml", compressedSize: 1, originalSize: MAX_COMPRESSION_RATIO + 1 },
+      ]),
+    /compression-ratio limit/,
+  );
+});
+
 test("an entry named like a path escape is refused", () => {
   for (const name of ["../etc/passwd", "/etc/passwd", "a/../../b"]) {
     assert.throws(
-      () => checkBudget([{ name, originalSize: 1 }]),
+      () => checkBudget([{ name, compressedSize: 1, originalSize: 1 }]),
       ZipError,
       `expected ${JSON.stringify(name)} to be refused`,
     );
   }
   // A dot in a name is not an escape: `docProps/app.xml` is ordinary.
-  checkBudget([{ name: "docProps/app.xml", originalSize: 1 }]);
+  checkBudget([{ name: "docProps/app.xml", compressedSize: 1, originalSize: 1 }]);
 });
 
 test("openZip checks before it hands out a reader", () => {

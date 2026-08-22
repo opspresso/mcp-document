@@ -22,7 +22,7 @@ exception: nothing here fetches pictures, so `![alt](url)` becomes a link
 labelled with its alt text, which keeps both the description and the address.
 The one way an image gets *into* a document is `render_document`'s optional
 `assets` argument — PNG or JPEG bytes sent by name alongside the Markdown,
-referenced as `![caption](asset://name)`, and embedded by the pptx and docx
+referenced as `![caption](asset://name)`, and embedded by the pptx, docx and PDF
 renderers. A referenced asset nobody sent is refused by name, and SVG is refused
 with the fix stated: PowerPoint's `svgBlip` demands a raster fallback part
 beside the vector one, and producing that means rasterising, which this
@@ -56,3 +56,12 @@ What each format then *makes* of that structure:
 - [The design system](design-system.md) — the colour, type and language every renderer shares
 - [The document engine](document-engine.md) — `docx`, `pdf` and `hwpx` as a report
 - [The presentation engine](presentation-engine.md) — `pptx` as a planned deck
+
+Every successful result carries machine-readable `validation`. `structure` says
+the generated package reopened and all internal relationships resolved;
+`content` says whether this server's reader reopened it; `visual` remains
+`not_run` because a package check is not a visual review. PPTX results also
+report continuation slides so density is visible without parsing prose.
+
+XLSX is not a fifth Markdown renderer. Use `render_spreadsheet` for a new
+workbook whose cells and formulas are explicit; see [Spreadsheets](spreadsheets.md).

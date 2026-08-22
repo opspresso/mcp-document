@@ -2,7 +2,7 @@
 
 ## Why the bytes, and never a link
 
-`render_document` returns the file inside the tool result, as an MCP `resource`
+`render_document` and `render_spreadsheet` return the file inside the tool result, as an MCP `resource`
 block. It used to upload to S3 and answer with a presigned URL, because a client
 that received a non-image blob would decode it as UTF-8 and hand the model a
 page of replacement characters — or, once that was fixed, an omission notice:
@@ -27,6 +27,12 @@ past it is refused *here*, with a sentence. The caller's transport bounds the
 whole JSON-RPC envelope, and base64 inflates by 4/3, so letting it be cut there
 turns "the document is large" into a parse failure that says nothing at all.
 
+Generated artifacts are not returned before a second parser reopens them.
+OOXML and HWPX validation checks required parts and every internal relationship;
+PDF validation reloads the file and checks the reported page count. The result
+reports this separately from visual validation, which the server does not
+perform.
+
 ## The protocol is the SDK's; the formats are not
 
 The protocol surface was four methods, and the one dependency that mattered in
@@ -45,7 +51,7 @@ is served statelessly as before. The tool schemas stay the JSON Schema objects
 the tools' documentation and restating them elsewhere is a transcription
 exercise with every chance of a quiet omission.
 
-The old reasoning still decides the format layer. DOCX, HWPX and PPTX are written by
+The old reasoning still decides the format layer. DOCX, HWPX, PPTX and XLSX are written by
 composing their parts directly, and read by a tag walker rather than a DOM
 parse: what these formats are actually used for here is a dozen elements, and a
 library's idea of a paragraph is one more thing between the document and the

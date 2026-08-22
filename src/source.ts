@@ -12,6 +12,7 @@
  */
 
 import { DocumentError } from "./errors.js";
+import { MAX_SOURCE_BYTES } from "./limits.js";
 
 export class SourceError extends DocumentError {}
 
@@ -49,7 +50,22 @@ export function decodeBase64(content: string): Uint8Array {
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 !== 0) {
     throw new SourceError("`content` is not valid base64");
   }
-  return Buffer.from(compact, "base64");
+  const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
+  const decodedLength = (compact.length / 4) * 3 - padding;
+  if (decodedLength > MAX_SOURCE_BYTES) {
+    throw new SourceError(
+      `the decoded document is ${decodedLength.toLocaleString("en-US")} bytes, over the ` +
+        `${MAX_SOURCE_BYTES.toLocaleString("en-US")} byte limit`,
+    );
+  }
+  const bytes = Buffer.from(compact, "base64");
+  if (bytes.byteLength > MAX_SOURCE_BYTES) {
+    throw new SourceError(
+      `the decoded document is ${bytes.byteLength.toLocaleString("en-US")} bytes, over the ` +
+        `${MAX_SOURCE_BYTES.toLocaleString("en-US")} byte limit`,
+    );
+  }
+  return bytes;
 }
 
 /** The document to read, from the caller's own bytes. */

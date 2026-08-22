@@ -25,7 +25,7 @@ test("slides come back in deck order, which is numeric and not lexical", () => {
     "ppt/slides/slide2.xml",
     "ppt/slides/slide1.xml",
     "ppt/slides/_rels/slide1.xml.rels",
-  ].map((name) => ({ name, originalSize: 0 }));
+  ].map((name) => ({ name, compressedSize: 0, originalSize: 0 }));
   assert.deepEqual(slidesOf(entries), [
     "ppt/slides/slide1.xml",
     "ppt/slides/slide2.xml",

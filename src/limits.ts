@@ -18,6 +18,9 @@
  */
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
+/** Decoded document bytes carried by one tool call. */
+export const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
+
 /**
  * Extracted text handed back to the caller.
  *
@@ -49,6 +52,15 @@ export const MAX_MARKDOWN_CHARS = 500_000;
  */
 export const MAX_ZIP_ENTRIES = 2_000;
 export const MAX_EXPANDED_BYTES = 100 * 1024 * 1024;
+export const MAX_ZIP_ENTRY_BYTES = 25 * 1024 * 1024;
+export const MAX_COMPRESSION_RATIO = 1_000;
+
+/** Parser work budgets below the archive byte ceiling. */
+export const MAX_XML_EVENTS = 1_000_000;
+export const MAX_XML_DEPTH = 256;
+export const MAX_SPREADSHEET_ROWS = 100_000;
+export const MAX_SPREADSHEET_CELLS = 1_000_000;
+export const MAX_INSPECTED_CELLS = 10_000;
 
 export function truncateText(text: string, maxChars: number): { text: string; note?: string } {
   if (text.length <= maxChars) {

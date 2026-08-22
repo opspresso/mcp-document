@@ -7,7 +7,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildZip } from "../zip.js";
-import { columnOf, xlsxToText, XlsxError } from "./xlsx.js";
+import { columnOf, inspectXlsx, xlsxToText, XlsxError } from "./xlsx.js";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
 
@@ -66,6 +66,45 @@ test("the stored value comes back, never the formula that made it", () => {
   const { text } = read(bytes);
   assert.equal(text, "## Sheet1\n42");
   assert.doesNotMatch(text, /SUM/);
+});
+
+test("inspection separates formulas, cached values and errors by cell address", () => {
+  const bytes = oneSheet(
+    '<row r="1"><c r="A1"><f>SUM(B1:C1)</f><v>42</v></c>' +
+      '<c r="B1" t="e"><f>1/0</f><v>#DIV/0!</v></c></row>',
+  );
+  const inspected = inspectXlsx(bytes);
+  assert.deepEqual(inspected.sheets[0]?.cells, [
+    { address: "A1", value: "42", formula: "SUM(B1:C1)" },
+    { address: "B1", value: "#DIV/0!", formula: "1/0", error: "#DIV/0!" },
+  ]);
+});
+
+test("hidden sheets stay excluded unless explicitly requested and active content is reported", () => {
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(
+      '<?xml version="1.0"?><workbook><sheets>' +
+        '<sheet name="Visible" sheetId="1" r:id="rId1"/>' +
+        '<sheet name="Secret" sheetId="2" state="veryHidden" r:id="rId2"/>' +
+        "</sheets></workbook>",
+    ),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/worksheets/sheet1.xml": utf8(sheet('<row r="1"><c r="A1"><v>public</v></c></row>')),
+    "xl/worksheets/sheet2.xml": utf8(sheet('<row r="1"><c r="A1"><v>secret</v></c></row>')),
+    "xl/externalLinks/externalLink1.xml": utf8("<externalLink/>"),
+    "xl/vbaProject.bin": new Uint8Array([1, 2, 3]),
+  });
+  const normal = inspectXlsx(bytes);
+  assert.deepEqual(normal.sheets.map((sheet) => sheet.name), ["Visible"]);
+  assert.equal(normal.hiddenSheets, 1);
+  assert.equal(normal.externalLinks, 1);
+  assert.equal(normal.macroEnabled, true);
+  const text = read(bytes);
+  assert.equal(text.text, "## Visible\npublic");
+  assert.equal(text.hiddenSheets, 1);
+
+  const explicit = inspectXlsx(bytes, true);
+  assert.deepEqual(explicit.sheets.map((sheet) => sheet.name), ["Visible", "Secret"]);
 });
 
 test("a sparse row keeps its columns instead of shifting left", () => {

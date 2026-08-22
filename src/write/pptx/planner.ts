@@ -284,9 +284,15 @@ function contentSlides(
         type: "content",
         title: [...title, { text: " — " }, ...head.runs],
         pieces: rest,
+        continuation: true,
       };
     }
-    return { type: "content", title: [...title, { text: CONTINUED }], pieces };
+    return {
+      type: "content",
+      title: [...title, { text: CONTINUED }],
+      pieces,
+      continuation: true,
+    };
   });
 }
 

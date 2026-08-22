@@ -24,7 +24,7 @@
 
 import { fromJsonSchema, McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
-import { callTool, TOOLS } from "./tools.js";
+import { callTool, TOOL_OUTPUT_SCHEMA, TOOLS } from "./tools.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 
 /** One validator for every tool: compiling per registration would repeat the work. */
@@ -45,6 +45,7 @@ export function buildServer(): McpServer {
       {
         description: tool.description,
         inputSchema: fromJsonSchema(tool.inputSchema, validator),
+        outputSchema: fromJsonSchema(TOOL_OUTPUT_SCHEMA, validator),
       },
       // The arguments arrive validated against the same schema a client read.
       // The cast is the one seam between the two type systems: `ToolResult` is

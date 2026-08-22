@@ -28,9 +28,9 @@ images, the GitHub release notes, and the GitOps dispatch.
 Tests cover the pure decisions — format detection, the zip budget, the HWP
 record walk and its control-character table, the spreadsheet's column
 arithmetic and row budget, RTF's destinations and escapes, and the Markdown
-parser — and, for each of the four writers, a **round trip**: Markdown is
-rendered to a document and read back, so both directions fail together or not
-at all.
+parser — and, for every writer, a structural reopen. Markdown outputs are also
+read back, and the spreadsheet writer is inspected for values, formulas and
+cached results, so both directions fail together or not at all.
 
 The PDF round trip is why `unpdf` is still a devDependency: the reader left with
 the URL side, but rendering a PDF nothing can read is worth catching.
@@ -44,4 +44,4 @@ matters most for `pptx`, whose line counting is an estimate: a slide that
 overflows is visible only on the screen.
 
 `Verify` runs typecheck, the tests and a `docker build` on every pull request.
-The release workflow runs them again on the tag.
+The release workflow runs the code checks again on the tag.

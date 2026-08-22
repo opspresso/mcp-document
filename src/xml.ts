@@ -1,3 +1,6 @@
+import { DocumentError } from "./errors.js";
+import { MAX_XML_DEPTH, MAX_XML_EVENTS } from "./limits.js";
+
 /**
  * A tag walker, which is all that reading DOCX and HWPX needs.
  *
@@ -22,6 +25,8 @@ export interface XmlHandler {
   open(name: string, attributes: string, selfClosing: boolean): void;
   close(name: string): void;
 }
+
+export class XmlError extends DocumentError {}
 
 const NAMED_ENTITIES: Record<string, string> = {
   lt: "<",
@@ -97,6 +102,8 @@ function endOfTag(xml: string, from: number): number {
 
 export function walkXml(xml: string, handler: XmlHandler): void {
   let index = 0;
+  let depth = 0;
+  let events = 0;
   while (index < xml.length) {
     const start = xml.indexOf("<", index);
     if (start === -1) {
@@ -118,7 +125,10 @@ export function walkXml(xml: string, handler: XmlHandler): void {
       index = end === -1 ? xml.length : end + 3;
       continue;
     }
-    // `<?xml ?>`, `<!DOCTYPE >`: markup that names nothing this reads.
+    if (xml.startsWith("<!DOCTYPE", start) || xml.startsWith("<!ENTITY", start)) {
+      throw new XmlError("document XML may not declare a DTD or entity");
+    }
+    // `<?xml ?>`: markup that names nothing this reads.
     if (xml.startsWith("<?", start) || xml.startsWith("<!", start)) {
       const end = endOfTag(xml, start);
       index = end === -1 ? xml.length : end + 1;
@@ -134,12 +144,27 @@ export function walkXml(xml: string, handler: XmlHandler): void {
     const inner = xml.slice(start + 1, end);
     index = end + 1;
     if (inner.startsWith("/")) {
+      depth = Math.max(0, depth - 1);
+      events += 1;
+      if (events > MAX_XML_EVENTS) {
+        throw new XmlError(`document XML has more than ${MAX_XML_EVENTS.toLocaleString("en-US")} elements`);
+      }
       handler.close(inner.slice(1).trim());
       continue;
     }
     const selfClosing = inner.endsWith("/");
     const body = selfClosing ? inner.slice(0, -1) : inner;
     const space = /\s/.exec(body)?.index ?? body.length;
+    events += 1;
+    if (events > MAX_XML_EVENTS) {
+      throw new XmlError(`document XML has more than ${MAX_XML_EVENTS.toLocaleString("en-US")} elements`);
+    }
+    if (!selfClosing) {
+      depth += 1;
+      if (depth > MAX_XML_DEPTH) {
+        throw new XmlError(`document XML is nested more than ${MAX_XML_DEPTH} elements deep`);
+      }
+    }
     handler.open(body.slice(0, space), body.slice(space).trim(), selfClosing);
   }
 }

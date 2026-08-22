@@ -1,5 +1,5 @@
 /**
- * Markdown in, a document in, three formats out.
+ * Markdown in, one document model, four report and presentation formats out.
  *
  * One parser and three renderers, rather than three writers each with its own
  * idea of what `**bold**` is. The shape in between is deliberately small — runs

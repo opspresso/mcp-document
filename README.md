@@ -5,6 +5,8 @@ An MCP server that parses office documents and writes them.
 | Tool | Takes | Returns |
 |---|---|---|
 | `read_document(content, filename?)` | DOCX, PPTX, XLSX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as an MCP `text` block |
+| `inspect_spreadsheet(content, filename?, mode?, includeHidden?)` | XLSX bytes as base64 | addressed cached values and formulas, without executing them |
+| `render_spreadsheet(sheets, title?, filename?)` | named rows and explicit formula cells | a new **XLSX file**, as an MCP `resource` block |
 | `render_document(format, content, profile?, title?, filename?, assets?)` | Markdown → `docx` `pptx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
 
 It exists because a document is not its text, and a report is not a file. An
@@ -21,8 +23,8 @@ reader was byte-for-byte the caller's, around the same `unpdf`. And the S3
 upload meant a second bucket, a second retention policy and a second AWS
 credential for bytes the caller was already storing everything else in.
 
-So this is the parser, and only the parser: the formats that genuinely need
-one. A caller sending a PDF, a web page or a text file gets a refusal that names
+So this is the parser and renderer, and only those: the formats that genuinely
+need one. A caller sending a PDF, a web page or a text file gets a refusal that names
 the format and says who reads it — silence would read as "this document is
 unreadable", which is a different and much more damaging claim.
 
@@ -30,9 +32,10 @@ unreadable", which is a different and much more damaging claim.
 
 | | |
 |---|---|
-| [Architecture](docs/architecture.md) | Why there is no SDK, and why a rendered file comes back as bytes |
-| [Reading](docs/reading.md) | What `read_document` takes, how a format is decided, what it refuses and why |
+| [Architecture](docs/architecture.md) | Why the protocol uses the SDK, and why a rendered file comes back as bytes |
+| [Reading](docs/reading.md) | What the readers take, how a format is decided, and what extraction omits |
 | [Writing](docs/writing.md) | The Markdown `render_document` understands, and the images it embeds |
+| [Spreadsheets](docs/spreadsheets.md) | Formula-safe XLSX inspection and new-workbook creation |
 | [The design system](docs/design-system.md) | The palette, the type scale and the language every renderer reads from `theme.ts` |
 | [The document engine](docs/document-engine.md) | How `docx`, `pdf` and `hwpx` become a report — and the Korean font inside the PDF |
 | [The presentation engine](docs/presentation-engine.md) | How `pptx` becomes a planned deck |

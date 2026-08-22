@@ -15,13 +15,20 @@
  */
 
 import { unzipSync, zipSync, type Zippable } from "fflate";
-import { MAX_EXPANDED_BYTES, MAX_ZIP_ENTRIES } from "./limits.js";
+import {
+  MAX_COMPRESSION_RATIO,
+  MAX_EXPANDED_BYTES,
+  MAX_ZIP_ENTRIES,
+  MAX_ZIP_ENTRY_BYTES,
+} from "./limits.js";
 import { DocumentError } from "./errors.js";
 
 export class ZipError extends DocumentError {}
 
 export interface ZipEntry {
   name: string;
+  /** What the central directory says the compressed stream occupies. */
+  compressedSize: number;
   /** What the central directory says this inflates to. */
   originalSize: number;
 }
@@ -52,7 +59,11 @@ export function listEntries(bytes: Uint8Array): ZipEntry[] {
   try {
     unzipSync(bytes, {
       filter(file) {
-        entries.push({ name: file.name, originalSize: file.originalSize });
+        entries.push({
+          name: file.name,
+          compressedSize: file.size,
+          originalSize: file.originalSize,
+        });
         return false;
       },
     });
@@ -78,6 +89,25 @@ export function checkBudget(entries: ZipEntry[]): void {
     throw new ZipError(
       `the archive has ${entries.length.toLocaleString("en-US")} entries, over the ` +
         `${MAX_ZIP_ENTRIES.toLocaleString("en-US")} limit`,
+    );
+  }
+  const oversized = entries.find((entry) => entry.originalSize > MAX_ZIP_ENTRY_BYTES);
+  if (oversized) {
+    throw new ZipError(
+      `the archive entry "${oversized.name}" expands to ` +
+        `${oversized.originalSize.toLocaleString("en-US")} bytes, over the ` +
+        `${MAX_ZIP_ENTRY_BYTES.toLocaleString("en-US")} per-entry limit`,
+    );
+  }
+  const extreme = entries.find(
+    (entry) =>
+      entry.originalSize > 0 &&
+      entry.originalSize / Math.max(1, entry.compressedSize) > MAX_COMPRESSION_RATIO,
+  );
+  if (extreme) {
+    throw new ZipError(
+      `the archive entry "${extreme.name}" expands at more than the ` +
+        `${MAX_COMPRESSION_RATIO}:1 compression-ratio limit`,
     );
   }
   const total = entries.reduce((sum, entry) => sum + entry.originalSize, 0);

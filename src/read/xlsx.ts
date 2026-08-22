@@ -22,6 +22,11 @@
 import { walkXml, type XmlHandler } from "../xml.js";
 import { openZip } from "../zip.js";
 import { DocumentError } from "../errors.js";
+import {
+  MAX_INSPECTED_CELLS,
+  MAX_SPREADSHEET_CELLS,
+  MAX_SPREADSHEET_ROWS,
+} from "../limits.js";
 
 export class XlsxError extends DocumentError {}
 
@@ -34,9 +39,33 @@ export interface XlsxText {
   /** Sheets that contributed, and how many the workbook holds. */
   sheets: number;
   totalSheets: number;
+  hiddenSheets: number;
   /** Rows kept and rows the workbook held, across every sheet read. */
   rows: number;
   totalRows: number;
+}
+
+export interface InspectedCell {
+  address: string;
+  value: string;
+  formula?: string;
+  error?: string;
+}
+
+export interface InspectedSheet {
+  name: string;
+  state: "visible" | "hidden" | "veryHidden";
+  cells: InspectedCell[];
+  totalCells: number;
+}
+
+export interface XlsxInspection {
+  sheets: InspectedSheet[];
+  totalSheets: number;
+  hiddenSheets: number;
+  complete: boolean;
+  externalLinks: number;
+  macroEnabled: boolean;
 }
 
 function localName(name: string): string {
@@ -115,19 +144,34 @@ class SharedStrings implements XmlHandler {
 /** One worksheet's cells, as rows of already-positioned strings. */
 class Sheet implements XmlHandler {
   private readonly rows: string[][] = [];
+  private readonly inspected: InspectedCell[] = [];
   private cells: string[] = [];
   private column = 0;
+  private row = 0;
+  private address = "";
   private type = "";
   private buffer = "";
+  private formula = "";
   private capturing = false;
+  private capturingFormula = false;
   /** `<v>` inside `<f>` does not exist, but `<is><t>` does — both are values. */
   private inValue = false;
+  private cellCount = 0;
+  private rowCount = 0;
+  private inspectionComplete = true;
 
-  constructor(private readonly shared: readonly string[]) {}
+  constructor(
+    private readonly shared: readonly string[],
+    private readonly keepRows = true,
+    private readonly inspectionLimit = 0,
+  ) {}
 
   text(value: string): void {
     if (this.capturing) {
       this.buffer += value;
+    }
+    if (this.capturingFormula) {
+      this.formula += value;
     }
   }
 
@@ -135,17 +179,26 @@ class Sheet implements XmlHandler {
     switch (localName(name)) {
       case "row":
         this.cells = [];
+        this.row = Number(attribute(attributes, "r")) || this.rowCount + 1;
         return;
       case "c": {
+        this.cellCount += 1;
+        if (this.cellCount > MAX_SPREADSHEET_CELLS) {
+          throw new XlsxError(
+            `a worksheet has more than ${MAX_SPREADSHEET_CELLS.toLocaleString("en-US")} cells`,
+          );
+        }
         this.type = attribute(attributes, "t") ?? "";
         const reference = attribute(attributes, "r");
         // Absent addresses mean "the next column", which is what a writer that
         // omits them intends.
         this.column = reference ? columnOf(reference) : this.cells.length;
+        this.address = reference ?? `${columnName(this.column)}${this.row}`;
         this.buffer = "";
+        this.formula = "";
         this.inValue = false;
         if (selfClosing) {
-          this.place("");
+          this.finishCell();
         }
         return;
       }
@@ -160,6 +213,9 @@ class Sheet implements XmlHandler {
       // what it is.
       case "f":
         this.capturing = false;
+        if (!selfClosing) {
+          this.capturingFormula = true;
+        }
         return;
       default:
         return;
@@ -172,11 +228,22 @@ class Sheet implements XmlHandler {
       case "t":
         this.capturing = false;
         return;
+      case "f":
+        this.capturingFormula = false;
+        return;
       case "c":
-        this.place(this.resolve());
+        this.finishCell();
         return;
       case "row":
-        this.rows.push(this.cells);
+        this.rowCount += 1;
+        if (this.rowCount > MAX_SPREADSHEET_ROWS) {
+          throw new XlsxError(
+            `a worksheet has more than ${MAX_SPREADSHEET_ROWS.toLocaleString("en-US")} rows`,
+          );
+        }
+        if (this.keepRows) {
+          this.rows.push(this.cells);
+        }
         this.cells = [];
         return;
       default:
@@ -204,16 +271,50 @@ class Sheet implements XmlHandler {
     this.cells[this.column] = value;
   }
 
+  private finishCell(): void {
+    const value = this.resolve();
+    if (this.keepRows) {
+      this.place(value);
+    }
+    if (this.inspectionLimit > 0) {
+      if (this.inspected.length < this.inspectionLimit) {
+        this.inspected.push({
+          address: this.address,
+          value,
+          ...(this.formula ? { formula: this.formula } : {}),
+          ...(this.type === "e" ? { error: value } : {}),
+        });
+      } else {
+        this.inspectionComplete = false;
+      }
+    }
+  }
+
   done(): string[][] {
     return this.rows;
   }
+
+  inspection(): { cells: InspectedCell[]; totalCells: number; complete: boolean } {
+    return { cells: this.inspected, totalCells: this.cellCount, complete: this.inspectionComplete };
+  }
+}
+
+function columnName(column: number): string {
+  let value = column + 1;
+  let name = "";
+  while (value > 0) {
+    value -= 1;
+    name = String.fromCharCode(65 + (value % 26)) + name;
+    value = Math.floor(value / 26);
+  }
+  return name;
 }
 
 /** Sheet name → part path, in workbook order. */
 function sheetParts(
   workbook: string | undefined,
   rels: string | undefined,
-): Array<{ name: string; path: string }> {
+): Array<{ name: string; path: string; state: "visible" | "hidden" | "veryHidden" }> {
   if (!workbook) {
     return [];
   }
@@ -228,7 +329,11 @@ function sheetParts(
       }
     }
   }
-  const sheets: Array<{ name: string; path: string }> = [];
+  const sheets: Array<{
+    name: string;
+    path: string;
+    state: "visible" | "hidden" | "veryHidden";
+  }> = [];
   for (const match of workbook.matchAll(/<(?:\w+:)?sheet\b([^>]*)\/?>/g)) {
     const attributes = match[1] ?? "";
     const name = attribute(attributes, "name");
@@ -236,10 +341,13 @@ function sheetParts(
       continue;
     }
     const id = attribute(attributes, "r:id") ?? attribute(attributes, "id");
+    const declaredState = attribute(attributes, "state");
+    const state =
+      declaredState === "hidden" || declaredState === "veryHidden" ? declaredState : "visible";
     // The relationship is authoritative; the conventional path is the fallback
     // for a workbook whose rels part is missing or unreadable.
     const path = (id && targets.get(id)) || `xl/worksheets/sheet${sheets.length + 1}.xml`;
-    sheets.push({ name, path });
+    sheets.push({ name, path, state });
   }
   return sheets;
 }
@@ -279,7 +387,9 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
   }
   const strings = shared.done();
 
-  const wanted = sheets.map((sheet) => sheet.path).filter((path) => names.includes(path));
+  const visibleSheets = sheets.filter((sheet) => sheet.state === "visible");
+  const hiddenSheets = sheets.length - visibleSheets.length;
+  const wanted = visibleSheets.map((sheet) => sheet.path).filter((path) => names.includes(path));
   const parts = read(wanted);
 
   const lines: string[] = [];
@@ -289,7 +399,7 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
   let sheetsRead = 0;
   let full = true;
 
-  for (const sheet of sheets) {
+  for (const sheet of visibleSheets) {
     const part = parts.get(sheet.path);
     if (!part) {
       continue;
@@ -329,7 +439,65 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
     text: lines.join("\n").trim(),
     sheets: sheetsRead,
     totalSheets: sheets.length,
+    hiddenSheets,
     rows: kept,
     totalRows: total,
+  };
+}
+
+export function inspectXlsx(bytes: Uint8Array, includeHidden = false): XlsxInspection {
+  const { entries, read } = openZip(bytes);
+  const names = entries.map((entry) => entry.name);
+  if (!names.includes(WORKBOOK)) {
+    throw new XlsxError("it has no workbook part — the archive is not an XLSX workbook");
+  }
+
+  const decoder = new TextDecoder();
+  const head = read([WORKBOOK, WORKBOOK_RELS, SHARED_STRINGS]);
+  const workbookXml = head.get(WORKBOOK);
+  const sheets = sheetParts(
+    workbookXml ? decoder.decode(workbookXml) : undefined,
+    head.get(WORKBOOK_RELS) ? decoder.decode(head.get(WORKBOOK_RELS)!) : undefined,
+  );
+  if (sheets.length === 0) {
+    throw new XlsxError("the workbook declares no sheets");
+  }
+
+  const shared = new SharedStrings();
+  const sharedXml = head.get(SHARED_STRINGS);
+  if (sharedXml) {
+    walkXml(decoder.decode(sharedXml), shared);
+  }
+  const strings = shared.done();
+
+  const visible = includeHidden ? sheets : sheets.filter((sheet) => sheet.state === "visible");
+  const wanted = visible.map((sheet) => sheet.path).filter((path) => names.includes(path));
+  const parts = read(wanted);
+  const inspected: InspectedSheet[] = [];
+  let remaining = MAX_INSPECTED_CELLS;
+  let complete = true;
+  for (const sheet of visible) {
+    if (remaining === 0) {
+      complete = false;
+      break;
+    }
+    const part = parts.get(sheet.path);
+    if (!part) {
+      continue;
+    }
+    const reader = new Sheet(strings, false, remaining);
+    walkXml(decoder.decode(part), reader);
+    const result = reader.inspection();
+    inspected.push({ name: sheet.name, state: sheet.state, cells: result.cells, totalCells: result.totalCells });
+    remaining = Math.max(0, remaining - result.cells.length);
+    complete &&= result.complete;
+  }
+  return {
+    sheets: inspected,
+    totalSheets: sheets.length,
+    hiddenSheets: sheets.filter((sheet) => sheet.state !== "visible").length,
+    complete,
+    externalLinks: names.filter((name) => name.startsWith("xl/externalLinks/") && name.endsWith(".xml")).length,
+    macroEnabled: names.includes("xl/vbaProject.bin"),
   };
 }

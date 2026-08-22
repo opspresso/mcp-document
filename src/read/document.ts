@@ -11,7 +11,7 @@
  * empty string reads as "the document is empty", which is a different and much
  * more damaging claim than "I could not read it".
  *
- * Three formats, all of them office containers. PDF and plain text left with the
+ * Office formats that need a parser. PDF and plain text left with the
  * URL side: they need no parser Agent Studio lacks, so routing one here was a
  * network round trip to reach the same `unpdf` — and a third copy of the
  * extraction to keep in step.
@@ -37,6 +37,12 @@ export interface ReadResult {
   format: Format;
   /** What came back, in the document's own units. */
   note?: string;
+  /** Whether every readable unit fitted inside the text budget. */
+  complete: boolean;
+  /** Parts deliberately left out of the text representation. */
+  omissions: string[];
+  /** Counts in the format's own units. */
+  counts?: Record<string, number>;
 }
 
 /**
@@ -47,12 +53,12 @@ export interface ReadResult {
  * so on the successful path, because that is the path where nobody is looking
  * for a caveat.
  */
-function fit(text: string, whole?: string): { text: string; note?: string } {
+function fit(text: string, whole?: string): { text: string; note?: string; complete: boolean } {
   const cut = truncateText(text, MAX_TEXT_CHARS);
   if (cut.note) {
-    return cut;
+    return { ...cut, complete: false };
   }
-  return whole ? { text: cut.text, note: whole } : { text: cut.text };
+  return whole ? { text: cut.text, note: whole, complete: true } : { text: cut.text, complete: true };
 }
 
 export async function readDocument(source: DocumentSource): Promise<ReadResult> {
@@ -64,26 +70,47 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
 
   if (format === "docx") {
     const { text } = docxToText(source.bytes);
-    return { format, ...fit(text, "the document body, without headers, footers or footnotes") };
+    return {
+      format,
+      ...fit(text, "the document body, without headers, footers or footnotes"),
+      omissions: ["headers", "footers", "footnotes", "comments", "tracked deletions", "formatting"],
+    };
   }
 
   if (format === "hwpx") {
     const { text, sections } = hwpxToText(source.bytes);
-    return { format, ...fit(text, `all ${sections} section(s)`) };
+    return {
+      format,
+      ...fit(text, `all ${sections} section(s)`),
+      omissions: ["formatting"],
+      counts: { sections },
+    };
   }
 
   if (format === "xlsx") {
     // The only reader besides the old PDF one that budgets for itself: a sheet
     // can dwarf any text budget, and cutting mid-row would leave a line whose
     // columns no longer line up with its neighbours'.
-    const { text, sheets, totalSheets, rows, totalRows } = xlsxToText(source.bytes, MAX_TEXT_CHARS);
-    const whole = sheets === totalSheets && rows === totalRows;
+    const { text, sheets, totalSheets, hiddenSheets, rows, totalRows } = xlsxToText(
+      source.bytes,
+      MAX_TEXT_CHARS,
+    );
+    const whole = sheets === totalSheets - hiddenSheets && rows === totalRows;
     return {
       text,
       format,
+      complete: whole,
+      omissions: [
+        "formulas",
+        "cell formatting",
+        "comments",
+        "macros",
+        ...(hiddenSheets > 0 ? ["hidden sheets"] : []),
+      ],
+      counts: { sheets, totalSheets, hiddenSheets, rows, totalRows },
       note: whole
-        ? `all ${totalSheets} sheet(s), ${totalRows} row(s)`
-        : `${rows} of ${totalRows} row(s) across ${sheets} of ${totalSheets} sheet(s)`,
+        ? `all ${sheets} visible sheet(s), ${totalRows} row(s)`
+        : `${rows} of ${totalRows} row(s) across ${sheets} visible sheet(s)`,
     };
   }
 
@@ -92,6 +119,8 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
     return {
       format,
       ...fit(text, `all ${slides} slide(s), without speaker notes`),
+      omissions: ["speaker notes", "comments", "animations", "formatting"],
+      counts: { slides },
     };
   }
 
@@ -106,14 +135,25 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
           ? "the document body, without headers or footers"
           : `all ${parts} ${unit}(s)`,
       ),
+      omissions: ["formatting", "headers", "footers"],
+      ...(parts === undefined ? {} : { counts: { [unit === "sheet" ? "sheets" : "slides"]: parts } }),
     };
   }
 
   if (format === "rtf") {
     const { text } = rtfToText(source.bytes);
-    return { format, ...fit(text, "the document body, without headers or footers") };
+    return {
+      format,
+      ...fit(text, "the document body, without headers or footers"),
+      omissions: ["headers", "footers", "formatting"],
+    };
   }
 
   const { text, sections, version } = hwpToText(source.bytes);
-  return { format, ...fit(text, `all ${sections} section(s) of an HWP ${version} document`) };
+  return {
+    format,
+    ...fit(text, `all ${sections} section(s) of an HWP ${version} document`),
+    omissions: ["formatting"],
+    counts: { sections },
+  };
 }

@@ -68,7 +68,7 @@ export type Piece =
 export type Slide =
   | { type: "cover"; title: Run[]; subtitle?: Run[] }
   | { type: "section"; title: Run[]; ordinal: number }
-  | { type: "content"; title?: Run[]; pieces: Piece[] }
+  | { type: "content"; title?: Run[]; pieces: Piece[]; continuation?: boolean }
   | { type: "cards"; title: Run[]; cards: Card[] }
   | { type: "metrics"; title: Run[]; metrics: Metric[] }
   | { type: "quote"; title: Run[]; quote: Run[]; attribution?: Run[] }

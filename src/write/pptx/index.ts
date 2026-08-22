@@ -76,6 +76,8 @@ export interface RenderedPptx {
   bytes: Uint8Array;
   /** How many slides the Markdown turned into, which is what the caller reports. */
   slides: number;
+  /** Slides created because one section did not fit in its first box. */
+  continuations: number;
 }
 
 export function renderPptx(document: MarkdownDocument, options: PptxOptions): RenderedPptx {
@@ -142,5 +144,9 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     );
   });
 
-  return { bytes: buildZip(parts), slides: slides.length };
+  return {
+    bytes: buildZip(parts),
+    slides: slides.length,
+    continuations: slides.filter((slide) => slide.type === "content" && slide.continuation).length,
+  };
 }

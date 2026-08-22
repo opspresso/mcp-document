@@ -169,6 +169,32 @@ test("a link is one clickable annotation, not one per word", async () => {
   assert.match(annotations!.toString(), /\d+ 0 R/);
 });
 
+test("a standalone asset image is embedded and a missing one is refused", async () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X4cSAAAAAElFTkSuQmCC",
+    "base64",
+  );
+  const rendered = await renderPdf(parseMarkdown("![구조도](asset://diagram.png)"), {
+    title: "t",
+    created: CREATED,
+    assets: { "diagram.png": { mimeType: "image/png", bytes: png } },
+  });
+  const loaded = await PDFDocument.load(rendered.bytes);
+  const imageObjects = loaded.context
+    .enumerateIndirectObjects()
+    .filter(([, object]) => object.toString().includes("/Subtype /Image"));
+  assert.ok(imageObjects.length > 0, "the PDF should carry an image XObject");
+
+  await assert.rejects(
+    () =>
+      renderPdf(parseMarkdown("![구조도](asset://missing.png)"), {
+        title: "t",
+        created: CREATED,
+      }),
+    /asset:\/\/missing\.png/,
+  );
+});
+
 test("a word wider than the page gets its own line rather than an endless loop", async () => {
   const text = await roundTrip(`start ${"x".repeat(400)} end`);
   assert.match(text, /start/);

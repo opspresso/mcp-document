@@ -13,6 +13,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { decodeBase64, loadSource, SourceError } from "./source.js";
+import { MAX_SOURCE_BYTES } from "./limits.js";
 
 
 test("base64 round-trips", () => {
@@ -23,6 +24,11 @@ test("base64 round-trips", () => {
 test("whitespace inside base64 is tolerated, since a wrapped payload is still base64", () => {
   const wrapped = Buffer.from("hello").toString("base64").split("").join("\n");
   assert.equal(Buffer.from(decodeBase64(wrapped)).toString("utf8"), "hello");
+});
+
+test("decoded input is bounded even when loadSource is called without the HTTP body limit", () => {
+  const content = Buffer.alloc(MAX_SOURCE_BYTES + 1).toString("base64");
+  assert.throws(() => decodeBase64(content), /decoded document.*over/);
 });
 
 test("anything that is not base64 is refused rather than silently decoded", () => {

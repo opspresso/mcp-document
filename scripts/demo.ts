@@ -15,8 +15,7 @@
  * Run it with `npm run demo`. The PDF and HWPX take the same source as the
  * DOCX on purpose: one report in three formats is what shows a drifted colour
  * or a diverged heading scale, which is exactly what `write/theme.ts` exists
- * to prevent. Assets go only to the formats that embed them — in the PDF and
- * HWPX the figure renders as the link it is documented to be.
+ * to prevent. HWPX is the one output that leaves the figure as a link.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +24,7 @@ import { renderDocx } from "../src/write/docx.js";
 import { renderHwpx } from "../src/write/hwpx.js";
 import { renderPdf } from "../src/write/pdf.js";
 import { renderPptx } from "../src/write/pptx/index.js";
+import { renderXlsx } from "../src/write/xlsx.js";
 import {
   DEFAULT_PROFILE,
   DOCUMENT_PROFILES,
@@ -66,7 +66,12 @@ const docx = renderDocx(report, {
 writeFileSync("build/demo.docx", docx);
 console.log(`build/demo.docx — ${docx.byteLength.toLocaleString("en-US")} bytes`);
 
-const pdf = await renderPdf(report, { title: REPORT_TITLE, created, profile: DEFAULT_PROFILE });
+const pdf = await renderPdf(report, {
+  title: REPORT_TITLE,
+  created,
+  assets,
+  profile: DEFAULT_PROFILE,
+});
 writeFileSync("build/demo.pdf", pdf.bytes);
 console.log(`build/demo.pdf — ${pdf.pages} pages, ${pdf.bytes.byteLength.toLocaleString("en-US")} bytes`);
 
@@ -77,6 +82,27 @@ const hwpx = renderHwpx(report, {
 });
 writeFileSync("build/demo.hwpx", hwpx);
 console.log(`build/demo.hwpx — ${hwpx.byteLength.toLocaleString("en-US")} bytes`);
+
+const xlsx = renderXlsx(
+  [
+    {
+      name: "요약",
+      rows: [
+        ["항목", "값"],
+        ["도입 대상", 12],
+        ["완료", 8],
+        ["진행률", { formula: "B3/B2", cachedValue: 8 / 12 }],
+        ["메모", "=로 시작해도 문자열은 문자열"],
+      ],
+    },
+  ],
+  { title: "AI Agent Platform 도입 현황", created: created.toISOString() },
+);
+writeFileSync("build/demo.xlsx", xlsx.bytes);
+console.log(
+  `build/demo.xlsx — ${xlsx.sheets} sheet, ${xlsx.cells} cells, ` +
+    `${xlsx.bytes.byteLength.toLocaleString("en-US")} bytes`,
+);
 
 writeFileSync("build/demo-deck.md", read("./demo-deck.md"));
 writeFileSync("build/demo-doc.md", read("./demo-doc.md"));
@@ -96,7 +122,7 @@ const writeProfile = async (profile: DocumentProfile): Promise<void> => {
     assets,
     profile,
   });
-  const profilePdf = await renderPdf(report, { title: REPORT_TITLE, created, profile });
+  const profilePdf = await renderPdf(report, { title: REPORT_TITLE, created, assets, profile });
   const profileHwpx = renderHwpx(report, {
     title: REPORT_TITLE,
     created: created.toISOString(),

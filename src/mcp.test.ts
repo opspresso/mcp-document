@@ -21,7 +21,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { buildServer } from "./mcp.js";
-import { TOOLS } from "./tools.js";
+import { TOOL_OUTPUT_SCHEMA, TOOLS } from "./tools.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 
 let http: Server;
@@ -65,6 +65,7 @@ describe("what a client is offered", () => {
       const offered = tools.find((tool) => tool.name === declared.name);
       assert.equal(offered?.description, declared.description);
       assert.deepEqual(offered?.inputSchema.required, declared.inputSchema.required);
+      assert.deepEqual(offered?.outputSchema?.required, TOOL_OUTPUT_SCHEMA.required);
     }
     await client.close();
   });

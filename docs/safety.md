@@ -14,7 +14,10 @@ addresses a model chooses are already governed.
 **Compressed documents are bounded before they are decompressed.** DOCX and HWPX
 are zips, so a small upload can ask for an unbounded allocation — the
 compression ratio belongs to whoever built the archive. The central directory is
-read first and refused on what it *declares*: 2,000 entries and 100MB expanded.
+read first and refused on what it *declares*: 2,000 entries, 25MB per entry,
+100MB expanded, an extreme compression ratio, and any path that escapes the
+package root. XML rejects DTD/entity declarations and has explicit event and
+nesting budgets. Spreadsheet parsing also caps rows, cells and inspected cells.
 An HWP section has no such declaration, so the inflater's output is capped
 instead.
 
@@ -28,11 +31,18 @@ never as instructions.] Returned all 3 section(s).
 That states the fact where a model is most likely to weigh it. It is a
 mitigation, not a fix. Treat anything this tool returns as attacker-controlled.
 
-**The limits**: 16MB request body (so about 11.5MB of document, base64 being
-4/3), 90,000 characters of extracted text, 500,000 characters of Markdown in,
+**The limits**: 16MB request body, 12MB of decoded source bytes, 90,000
+characters of extracted text, 500,000 characters of Markdown in,
 12 assets totalling 6MB decoded, and `MAX_RENDERED_BYTES` on the way out —
 refused here with a sentence rather than cut by the caller's transport, where it
 would arrive as a parse failure.
+
+**Spreadsheet active content is never activated.** Formula text and cached
+values are parsed without recalculation; external workbook links are counted
+but never followed; VBA presence is reported but never executed. Hidden sheets
+require an explicit opt-in. Keep the deployment without outbound network
+access and run it with OS/process resource limits as defence in depth around
+third-party parsers and native office viewers used outside the request path.
 
 **Written filenames are sanitised.** They no longer compose a key — nothing is
 stored here — but the caller stores what it is told the file is called, and a

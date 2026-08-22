@@ -29,7 +29,7 @@ only safe while nothing routes to it from outside the cluster —
     GET    /health   liveness
 
 The process logs one JSON line per event. Every tool call leaves a `tool_call`
-line on stdout — the tool, the format (requested of `render_document`, or the
+line on stdout — the tool, the format (requested of a renderer, or the
 extension a `read_document` file was named by), how long it took and whether it
 answered (`ok`) — and a failure that reaches a tool is written to stderr as
 well, so a format that stopped parsing has evidence behind it: `warn` for a
@@ -71,7 +71,9 @@ Tools → register with the URL ending in `/mcp` and a header
 `Authorization: Bearer <MCP_API_KEY>`. No tenant header: there is nothing left
 to partition.
 
-`read_document` returns a `text` block, which flows straight into the
-turn. `render_document` returns a `resource` block carrying the bytes, which
+`read_document` and `inspect_spreadsheet` return text plus machine-readable
+completeness, omissions and warnings. `render_document` and
+`render_spreadsheet` return a `resource` block carrying the bytes plus structural
+validation, which
 Agent Studio stores as an artifact and delivers to the user — so the model should
 describe what it wrote rather than offer a link.

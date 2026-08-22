@@ -7,7 +7,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { decodeXmlEntities, escapeXml, walkXml, type XmlHandler } from "./xml.js";
+import { decodeXmlEntities, escapeXml, walkXml, XmlError, type XmlHandler } from "./xml.js";
 
 interface Event {
   kind: "text" | "open" | "close";
@@ -66,10 +66,14 @@ test("a `>` inside an attribute value does not cut the tag short", () => {
   assert.equal(textOf('<a title="1 > 0">body</a>'), "body");
 });
 
-test("declarations, comments and doctypes contribute nothing", () => {
+test("declarations and comments contribute nothing", () => {
   assert.equal(textOf('<?xml version="1.0" encoding="UTF-8"?><a>x</a>'), "x");
   assert.equal(textOf("<a>x<!-- a comment -->y</a>"), "xy");
-  assert.equal(textOf("<!DOCTYPE html><a>x</a>"), "x");
+});
+
+test("DTD and entity declarations are refused", () => {
+  assert.throws(() => textOf("<!DOCTYPE html><a>x</a>"), XmlError);
+  assert.throws(() => textOf('<!ENTITY x "secret"><a>&x;</a>'), XmlError);
 });
 
 test("CDATA is text, and an unterminated one takes the rest of the document literally", () => {

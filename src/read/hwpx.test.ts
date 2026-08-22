@@ -52,7 +52,7 @@ test("sections are ordered by their number, not by their name", () => {
     "Contents/section0.xml",
     "Contents/header.xml",
     "mimetype",
-  ].map((name) => ({ name, originalSize: 1 }));
+  ].map((name) => ({ name, compressedSize: 1, originalSize: 1 }));
   assert.deepEqual(sectionsOf(entries), [
     "Contents/section0.xml",
     "Contents/section2.xml",
