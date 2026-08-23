@@ -286,7 +286,11 @@ class Extractor implements XmlHandler {
         this.picture = attributeOf(attributes, "binaryItemIDRef");
         return;
       case "tbl":
-        this.endParagraph();
+        if (this.cellDepth > 0) {
+          this.observed.add("a table nested inside a cell");
+        } else {
+          this.endParagraph();
+        }
         this.tables.push({ rows: [], cells: [], columns: 0, merged: false, across: 1, down: 1 });
         return;
       case "cellSpan": {

@@ -45,7 +45,13 @@ export interface Inspection {
 /** A block's text as a preview, quoted so nothing in it can break the line. */
 function preview(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  const cut = flat.length > MAX_BLOCK_PREVIEW_CHARS ? `${flat.slice(0, MAX_BLOCK_PREVIEW_CHARS)}…` : flat;
+  // By code point: slicing the string would cut an emoji in half and leave an
+  // unpaired surrogate — `JSON.stringify` escapes it, so the line survives and
+  // the preview reads as a replacement character.
+  const cut =
+    flat.length > MAX_BLOCK_PREVIEW_CHARS
+      ? `${[...flat].slice(0, MAX_BLOCK_PREVIEW_CHARS).join("")}…`
+      : flat;
   return JSON.stringify(cut);
 }
 
@@ -186,6 +192,17 @@ export function inspectBlocks(
     const written = linesOf(index, block);
     const length = written.reduce((sum, line) => sum + line.length + 1, 0);
     if (used + length > MAX_TEXT_CHARS) {
+      // A block bigger than the whole budget — a four-thousand-row table — has
+      // to give something rather than nothing, or a caller paging by
+      // `from = to + 1` would step straight over it and never see it at all.
+      // Its own line describes it; the rows it holds are what did not fit.
+      if (last < from) {
+        const head = written[0];
+        if (head !== undefined && head.length + 1 <= MAX_TEXT_CHARS) {
+          lines.push(head);
+          last = index;
+        }
+      }
       break;
     }
     lines.push(...written);
@@ -195,7 +212,9 @@ export function inspectBlocks(
   return {
     text: lines.join("\n"),
     from,
-    to: Math.max(from, last),
+    // Nothing described is `to < from`, which is the only honest way to say
+    // "this window is empty" — reporting `from` claimed a block was covered.
+    to: last,
     totalBlocks: total,
     complete: last === total - 1 && from === 0,
   };

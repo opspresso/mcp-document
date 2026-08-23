@@ -66,7 +66,7 @@ function breakLine(block: Extract<ReadBlock, { kind: "break" }>): string {
   if (block.unit === "sheet") {
     return `## ${named === undefined || named === "" ? `Sheet ${block.index}` : named}`;
   }
-  const unit = block.unit === "slide" ? "Slide" : "Section";
+  const unit = block.unit === "slide" ? "Slide" : block.unit === "page" ? "Page" : "Section";
   return `## ${unit} ${block.index}${named ? `: ${named}` : ""}`;
 }
 
@@ -174,8 +174,22 @@ function tableChunk(
   budget: number,
 ): { text: string; rows: number; complete: boolean } {
   if (table.rows.length === 0 || table.columns < MIN_TABLE_COLUMNS) {
-    const text = tableAsParagraphs(table).join("\n\n");
-    return { text, rows: table.rows.length, complete: true };
+    // One column is paragraphs, and paragraphs answer to the budget like any
+    // others: writing them all regardless made a narrow table all-or-nothing,
+    // and reporting `rows: table.rows.length` for the nothing case counted
+    // rows that were never written.
+    const lines = tableAsParagraphs(table);
+    const kept: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      const cost = (kept.length === 0 ? 0 : 2) + line.length;
+      if (used + cost > budget) {
+        return { text: kept.join("\n\n"), rows: kept.length, complete: false };
+      }
+      kept.push(line);
+      used += cost;
+    }
+    return { text: kept.join("\n\n"), rows: kept.length, complete: true };
   }
   const grid = gridOf(table.rows, table.columns);
   const align = Array.from(
@@ -190,7 +204,10 @@ function tableChunk(
     return { text: "", rows: 0, complete: false };
   }
   let used = opening;
-  let kept = 0;
+  // The header is a row the table held and a row that was written, so it counts
+  // on both sides — counting it only in the total said "1 of 2" about a table
+  // that had been written whole.
+  let kept = 1;
   for (let index = 0; index < grid.length; index += 1) {
     if (index === head) {
       continue;
@@ -213,7 +230,7 @@ function chunkOf(block: ReadBlock, budget: number): { text: string; rows?: numbe
       // A heading is already emphatic, and every format sets its headings bold
       // — carrying that through would wrap each one in `**` for no difference
       // in what it says.
-      const text = oneLine(block.runs.map((run) => ({ ...run, bold: false })));
+      const text = oneLine(block.runs.map(({ bold: _bold, ...run }) => run));
       return { text: text === "" ? "" : `${"#".repeat(block.level)} ${text}`, complete: true };
     }
     case "paragraph":
@@ -222,13 +239,28 @@ function chunkOf(block: ReadBlock, budget: number): { text: string; rows?: numbe
       const text = oneLine(block.runs);
       return { text: text === "" ? "" : `> ${text}`, complete: true };
     }
-    case "list":
-      return {
-        text: listLines(block.ordered, block.items, block.marks?.start).join("\n"),
-        complete: true,
-      };
-    case "code":
-      return { text: fenceBlock(block.text, block.language), complete: true };
+    case "list": {
+      // An item at a time, for the reason a table stops on a row: a list too
+      // long for what is left used to write nothing, and the blocks after it
+      // were then skipped for a budget the list never spent.
+      const lines = listLines(block.ordered, block.items, block.marks?.start);
+      const kept: string[] = [];
+      let used = 0;
+      for (const line of lines) {
+        if (used + line.length + (kept.length === 0 ? 0 : 1) > budget) {
+          return { text: kept.join("\n"), complete: false };
+        }
+        kept.push(line);
+        used += line.length + (kept.length === 1 ? 0 : 1);
+      }
+      return { text: kept.join("\n"), complete: true };
+    }
+    case "code": {
+      // All or nothing, because half a fenced block is not one — but it says
+      // so rather than being written past the budget.
+      const text = fenceBlock(block.text, block.language);
+      return text.length > budget ? { text: "", complete: false } : { text, complete: true };
+    }
     case "rule":
       return { text: "---", complete: true };
     case "break":

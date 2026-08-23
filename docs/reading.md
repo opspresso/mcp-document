@@ -97,6 +97,10 @@ element puts every value after either of them in a column it does not belong to.
 The run is paid for when a later cell in the row needs it, which is also why the
 `16384`-wide padding every ODS row ends with costs nothing.
 
+**A tracked insertion says it is one.** Its text is `w:t` like any other, so
+nothing in the words says the paragraph is a proposal rather than the document
+— `inspect_document` is where a reader learns it.
+
 **The cut falls on a block boundary, and inside a table on a row.** A table cut
 between its header and its divider is not a table when it is read back, and a
 row cut in half is a row whose columns no longer line up — the same failure the
@@ -115,20 +119,6 @@ It is a line grammar rather than JSON for one reason: the caller cuts a tool
 result at a fixed length, and a truncated JSON document is a total loss where a
 truncated line grammar loses its last line. XLSX is refused by name — a
 workbook's structure is `inspect_spreadsheet`'s question.
-
-**A heading that is also numbered is a heading.** Word writes `w:pStyle` before
-`w:numPr`, so a marker chosen while walking past each element overwrote the
-level — and numbering the headings is the ordinary shape of a Korean or a legal
-template. The paragraph's properties are collected and read at its end instead.
-`w:numId="0"`, which is how Word says a paragraph's numbering was removed, is
-not a list.
-
-**A column a cell does not fill still costs a separator.** ODF stores a run of
-identical or empty cells once, with `table:number-columns-repeated`, and a
-merge leaves `table:covered-table-cell` behind; a reader that emits one
-separator per element puts every value after either of them in a column it does
-not belong to. The run is paid for when a later cell in the row needs it, which
-is also why the `16384`-wide padding every ODS row ends with costs nothing.
 
 **What it refuses, it names.** A PDF, a web page and a text file are each
 identified and sent back to the caller that reads them; the 97-2003 binaries

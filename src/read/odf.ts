@@ -327,6 +327,12 @@ class Extractor implements XmlHandler {
           return;
         }
         const target = attributeOf(attributes, "xlink:href");
+        if (this.cellDepth > 0) {
+          // A picture is not a cell's text, and lifting it out would take the
+          // cell's words with it — the block break lands mid-row.
+          this.observed.add("pictures inside table cells");
+          return;
+        }
         this.endParagraph();
         this.blocks.push({
           kind: "image",
@@ -350,11 +356,14 @@ class Extractor implements XmlHandler {
             ...(named ? { name: named } : {}),
           });
         }
+        if (this.cellDepth > 0) {
+          this.observed.add("a table nested inside a cell");
+        }
         this.tables.push({ rows: [], cells: [], columns: 0, merged: false, owed: 0, headerDepth: 0 });
         return;
       }
       case "table-header-rows":
-        if (this.table) {
+        if (this.table && this.skipDepth === 0) {
           this.table.headerDepth += 1;
         }
         return;
@@ -431,9 +440,13 @@ class Extractor implements XmlHandler {
           return;
         }
         // Inside a cell a paragraph is a line *within* the cell, not the end of
-        // anything — ending here would put every cell on its own row.
+        // anything — ending here would put every cell on its own row. The level
+        // goes with it: `endParagraph` is what clears it, so a `text:h` in a
+        // cell left its level to be worn by the first body paragraph after the
+        // table, inventing a heading the document does not have.
         if (this.cellDepth > 0) {
           this.pending += " ";
+          this.headingLevel = undefined;
           return;
         }
         this.endParagraph();
@@ -453,7 +466,7 @@ class Extractor implements XmlHandler {
         this.frameLabel = undefined;
         return;
       case "table-header-rows":
-        if (this.table && this.table.headerDepth > 0) {
+        if (this.table && this.skipDepth === 0 && this.table.headerDepth > 0) {
           this.table.headerDepth -= 1;
         }
         return;
@@ -506,7 +519,12 @@ class Extractor implements XmlHandler {
         return;
       }
       case "table":
-        this.finishTable();
+        // The open above does not push inside a skipped subtree, so this must
+        // not pop: an annotation holding a table would finish the *outer* one
+        // and leave every cell after it with nowhere to go.
+        if (this.skipDepth === 0) {
+          this.finishTable();
+        }
         return;
       default:
         return;

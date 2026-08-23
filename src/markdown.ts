@@ -201,7 +201,14 @@ export function parseInline(source: string, style: Style = {}, depth = 0): Run[]
       }
     }
 
-    if (here === "!" && rest[1] === "[") {
+    // A link and an image both need a `](` somewhere after the bracket, and the
+    // patterns below backtrack across the whole remainder when there is none.
+    // 500,000 brackets — `MAX_MARKDOWN_CHARS` exactly — held the event loop for
+    // over two minutes on a single-threaded server; this is what makes the cost
+    // of *not* being a link a single scan rather than a walk per bracket.
+    const closes = here === "[" || (here === "!" && rest[1] === "[") ? rest.indexOf("](") : -1;
+
+    if (here === "!" && rest[1] === "[" && closes !== -1) {
       // Nothing here fetches or embeds pictures, so an image becomes a link to
       // where the picture is. Its label is not parsed as inline markup: alt
       // text is a description, and `*` in it is an asterisk.
@@ -209,14 +216,18 @@ export function parseInline(source: string, style: Style = {}, depth = 0): Run[]
       if (image) {
         const href = image[2]!.replace(/^<|>$/g, "");
         flush();
-        const alt = image[1]!.replace(/\\(.)/g, "$1");
+        // The same escapes a label resolves, and no others: `\\(.)` stripped a
+        // backslash that was never an escape, so `![C:\\dir](x)` lost the `d`.
+        const alt = image[1]!.replace(/\\([\s\S])/g, (whole, char: string) =>
+          ESCAPABLE.test(char) ? char : whole,
+        );
         runs.push(styled(alt || "image", { ...style, href }));
         index += image[0].length;
         continue;
       }
     }
 
-    if (here === "[") {
+    if (here === "[" && closes !== -1) {
       const link = /^\[((?:\\.|[^\]\\])*)\]\(\s*(<[^>]*>|[^)\s]*)(?:\s+"[^"]*")?\s*\)/.exec(rest);
       if (link) {
         const href = link[2]!.replace(/^<|>$/g, "");
@@ -230,14 +241,21 @@ export function parseInline(source: string, style: Style = {}, depth = 0): Run[]
 
     if ((here === "*" || here === "_") && depth < MAX_INLINE_DEPTH) {
       const opens = here === "*" || underscoreOpensEmphasis(source, index);
-      const strong = opens ? /^(\*\*|__)(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest) : null;
+      // `(?:\\[\s\S]|[^\\])` rather than `[\s\S]`: a backslash always takes the
+      // character after it, so an *escaped* delimiter can never be read as the
+      // closing one. Without it `*SELECT \\* FROM t*` closed on the escaped
+      // asterisk — the run came back as `SELECT \\` with ` FROM t*` beside it,
+      // a backslash in the prose and the asterisk moved to the end. Every
+      // reader here produces italic runs, so a document holding an asterisk in
+      // an italic phrase reached it.
+      const strong = opens ? /^(\*\*|__)(?=\S)((?:\\[\s\S]|[^\\])+?)(?<=\S)\1/.exec(rest) : null;
       if (strong?.[2]) {
         flush();
         runs.push(...parseInline(strong[2], { ...style, bold: true }, depth + 1));
         index += strong[0].length;
         continue;
       }
-      const emphasis = opens ? /^(\*|_)(?=\S)([\s\S]+?)(?<=\S)\1/.exec(rest) : null;
+      const emphasis = opens ? /^(\*|_)(?=\S)((?:\\[\s\S]|[^\\])+?)(?<=\S)\1/.exec(rest) : null;
       if (emphasis?.[2]) {
         flush();
         runs.push(...parseInline(emphasis[2], { ...style, italic: true }, depth + 1));
@@ -546,7 +564,12 @@ export function escapeLineStart(text: string): string {
 function fenceInline(text: string): string {
   const runs = [...text.matchAll(/`+/g)].map((match) => match[0].length);
   const fence = "`".repeat(Math.max(0, ...runs) + 1);
-  return `${fence}${text}${fence}`;
+  // A span that begins or ends with a backtick fuses with its own fence, and
+  // the parser then reads a shorter span and leaves the rest as prose. One
+  // space on each side is what CommonMark strips back off — and this parser
+  // trims, so it comes back the same way.
+  const padded = text.startsWith("`") || text.endsWith("`") ? ` ${text} ` : text;
+  return `${fence}${padded}${fence}`;
 }
 
 /**
@@ -600,9 +623,14 @@ export function fenceLanguage(language: string): string {
 
 /** Runs as Markdown: `**bold**`, `` `code` ``, `[label](href)`. */
 export function renderRuns(runs: readonly Run[]): string {
-  return mergeRuns(runs)
+  const written = mergeRuns(runs)
     .map((run) => {
-      let text = run.code ? fenceInline(run.text) : escapeInline(run.text);
+      // A code span's contents are literal, so a `]` inside one ends the link
+      // label it would sit in and leaves `](url)` standing in the prose — the
+      // failure `renderImage` exists to prevent, in its code-span form. The
+      // link is the one that carries an address, so it is the one that is kept.
+      const code = run.code === true && run.href === undefined;
+      let text = code ? fenceInline(run.text) : escapeInline(run.text);
       // `***x***` is not bold italic to this parser: the strong pattern is lazy,
       // so it closes on the first `**` it reaches and leaves an asterisk behind.
       // The inner delimiter has to be the other one — and it is the *inner* one
@@ -615,6 +643,16 @@ export function renderRuns(runs: readonly Run[]): string {
         text = wrap(text, "**");
       }
       return run.href ? `[${text}](${linkTarget(run.href)})` : text;
-    })
+    });
+  // A link writes a real `[`, so a run ending in `!` beside one spells `![`
+  // and the pair is read back as an image — the exclamation mark eaten and the
+  // link turned into a picture. `escapeInline` cannot see it: the `!` and the
+  // `[` belong to different runs.
+  return written
+    .map((part, index) =>
+      part.endsWith("!") && written[index + 1]?.startsWith("[")
+        ? `${part.slice(0, -1)}\\!`
+        : part,
+    )
     .join("");
 }
