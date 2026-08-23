@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildZip, stored } from "../zip.js";
-import { odfKindOf, odfToText, OdfError } from "./odf.js";
+import { contentXmlToBlocks, odfKindOf, odfToText, OdfError } from "./odf.js";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
 
@@ -32,7 +32,9 @@ test("a text document comes back as paragraphs", () => {
   const bytes = odf(MIME.text, `<text:h>보고서</text:h><text:p>본문입니다.</text:p>`);
   const { text, kind } = odfToText(bytes);
   assert.equal(kind, "text");
-  assert.equal(text, "보고서\n본문입니다.");
+  // `text:h` is a heading now: the level was on the element being opened and
+  // the reader threw it away.
+  assert.equal(text, "# 보고서\n\n본문입니다.");
 });
 
 test("a spreadsheet names each sheet and separates cells", () => {
@@ -41,7 +43,7 @@ test("a spreadsheet names each sheet and separates cells", () => {
   const { text, kind, parts } = odfToText(bytes);
   assert.equal(kind, "spreadsheet");
   assert.equal(parts, 1);
-  assert.equal(text, "## Data\nA | B");
+  assert.equal(text, "## Data\n\n| A | B |\n| --- | --- |");
 });
 
 test("a presentation numbers its slides", () => {
@@ -53,7 +55,7 @@ test("a presentation numbers its slides", () => {
   assert.equal(parts, 2);
   // A blank line between slides: the heading flushes the previous one, which is
   // what keeps two decks' worth of text from reading as one continuous page.
-  assert.equal(text, "## Slide 1\nfirst\n\n## Slide 2\nsecond");
+  assert.equal(text, "## Slide 1\n\nfirst\n\n## Slide 2\n\nsecond");
 });
 
 test("an encoded run of spaces survives, since XML would have collapsed it", () => {
@@ -87,7 +89,7 @@ test("a run of repeated cells occupies its columns, so the values after it do no
     `<table:table-cell><text:p>B</text:p></table:table-cell></table:table-row>`;
   const bytes = odf(MIME.spreadsheet, `<table:table table:name="Data">${row}</table:table>`);
   // Five columns: B is the fifth, not the second.
-  assert.equal(odfToText(bytes).text, "## Data\nA | | | | B");
+  assert.equal(odfToText(bytes).text, "## Data\n\n| A |  |  |  | B |\n| --- | --- | --- | --- | --- |");
 });
 
 test("the repeat that pads a row to the sheet's width costs nothing", () => {
@@ -97,7 +99,7 @@ test("the repeat that pads a row to the sheet's width costs nothing", () => {
     `<table:table-row><table:table-cell><text:p>A</text:p></table:table-cell>` +
     `<table:table-cell table:number-columns-repeated="16384"/></table:table-row>`;
   const bytes = odf(MIME.spreadsheet, `<table:table table:name="Data">${row}</table:table>`);
-  assert.equal(odfToText(bytes).text, "## Data\nA");
+  assert.equal(odfToText(bytes).text, "## Data\n\nA");
 });
 
 test("a cell covered by a merge still holds its column", () => {
@@ -107,7 +109,8 @@ test("a cell covered by a merge still holds its column", () => {
     `<table:covered-table-cell/>` +
     `<table:table-cell><text:p>B</text:p></table:table-cell></table:table-row>`;
   const bytes = odf(MIME.spreadsheet, `<table:table table:name="Data">${row}</table:table>`);
-  assert.equal(odfToText(bytes).text, "## Data\nA | | B");
+  // Three columns: the covered cell is the position the span already claimed.
+  assert.equal(odfToText(bytes).text, "## Data\n\n| A |  | B |\n| --- | --- | --- |");
 });
 
 test("text a change tracker deleted is not the document's text", () => {
@@ -155,5 +158,143 @@ test("speaker notes are not slide content", () => {
       `<presentation:notes><draw:frame><draw:text-box><text:p>말할 것</text:p></draw:text-box></draw:frame></presentation:notes>` +
       `</draw:page>`,
   );
-  assert.equal(odfToText(bytes).text, "## Slide 1\nslide");
+  assert.equal(odfToText(bytes).text, "## Slide 1\n\nslide");
+});
+
+/** The body only, so a case is a string rather than an archive. */
+const body = (xml: string, kind: "text" | "spreadsheet" | "presentation" = "text") =>
+  contentXmlToBlocks(`<office:document-content><office:body>${xml}</office:body></office:document-content>`, kind)
+    .blocks;
+
+test("a heading states its own level, which was being thrown away", () => {
+  const blocks = body(`<text:h text:outline-level="3">배경</text:h>`);
+  assert.deepEqual(blocks, [{ kind: "heading", level: 3, runs: [{ text: "배경" }] }]);
+  // Old writers say `text:level`, and a heading with neither is level 1.
+  assert.equal(body(`<text:h text:level="2">x</text:h>`)[0]?.kind, "heading");
+  assert.deepEqual(body(`<text:h>x</text:h>`), [
+    { kind: "heading", level: 1, runs: [{ text: "x" }] },
+  ]);
+});
+
+test("a level past six is clamped rather than dropped", () => {
+  assert.deepEqual(body(`<text:h text:outline-level="9">깊은 제목</text:h>`), [
+    { kind: "heading", level: 6, runs: [{ text: "깊은 제목" }] },
+  ]);
+});
+
+test("a list is a list, and its depth is how many lists it sits inside", () => {
+  const blocks = body(
+    `<text:list><text:list-item><text:p>하나</text:p></text:list-item>` +
+      `<text:list-item><text:list><text:list-item><text:p>안쪽</text:p></text:list-item></text:list></text:list-item>` +
+      `</text:list>`,
+  );
+  assert.deepEqual(blocks, [
+    {
+      kind: "list",
+      ordered: false,
+      items: [
+        { runs: [{ text: "하나" }], depth: 0 },
+        { runs: [{ text: "안쪽" }], depth: 1 },
+      ],
+    },
+  ]);
+});
+
+test("a numbered list style makes a numbered list", () => {
+  const xml =
+    `<office:automatic-styles>` +
+    `<text:list-style style:name="L1"><text:list-level-style-number text:level="1"/></text:list-style>` +
+    `</office:automatic-styles>` +
+    `<office:body><text:list text:style-name="L1"><text:list-item><text:p>첫째</text:p></text:list-item></text:list></office:body>`;
+  const { blocks } = contentXmlToBlocks(`<office:document-content>${xml}</office:document-content>`, "text");
+  assert.equal(blocks[0]?.kind, "list");
+  if (blocks[0]?.kind === "list") {
+    assert.equal(blocks[0].ordered, true);
+  }
+});
+
+test("a nested list with no style of its own inherits the one outside it", () => {
+  // "No style named" is not "a bullet" — a nested `text:list` omits the name
+  // and inherits, so reading the absence as a default renumbers half a list.
+  const xml =
+    `<office:automatic-styles>` +
+    `<text:list-style style:name="L1"><text:list-level-style-number text:level="1"/>` +
+    `<text:list-level-style-number text:level="2"/></text:list-style>` +
+    `</office:automatic-styles><office:body>` +
+    `<text:list text:style-name="L1"><text:list-item><text:list><text:list-item>` +
+    `<text:p>안쪽</text:p></text:list-item></text:list></text:list-item></text:list></office:body>`;
+  const { blocks } = contentXmlToBlocks(`<office:document-content>${xml}</office:document-content>`, "text");
+  assert.equal(blocks[0]?.kind === "list" && blocks[0].ordered, true);
+});
+
+test("a link keeps the address, not only the words that pointed at it", () => {
+  const blocks = body(`<text:p>see <text:a xlink:href="https://x/a?b=1&amp;c=2">here</text:a></text:p>`);
+  assert.deepEqual(blocks, [
+    {
+      kind: "paragraph",
+      runs: [{ text: "see " }, { text: "here", href: "https://x/a?b=1&c=2" }],
+    },
+  ]);
+});
+
+test("a span wearing a bold style is bold", () => {
+  const xml =
+    `<office:automatic-styles>` +
+    `<style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>` +
+    `<style:style style:name="T2" style:family="text"><style:text-properties fo:font-style="italic"/></style:style>` +
+    `</office:automatic-styles><office:body>` +
+    `<text:p>a<text:span text:style-name="T1">b</text:span><text:span text:style-name="T2">c</text:span></text:p>` +
+    `</office:body>`;
+  const { blocks } = contentXmlToBlocks(`<office:document-content>${xml}</office:document-content>`, "text");
+  assert.deepEqual(blocks, [
+    {
+      kind: "paragraph",
+      runs: [{ text: "a" }, { text: "b", bold: true }, { text: "c", italic: true }],
+    },
+  ]);
+});
+
+test("a picture leaves a mark saying it was there", () => {
+  const blocks = body(
+    `<text:p><draw:frame draw:name="조직도"><draw:image xlink:href="Pictures/1.png"/></draw:frame></text:p>`,
+  );
+  assert.deepEqual(blocks, [{ kind: "image", alt: "조직도", target: "Pictures/1.png" }]);
+});
+
+test("a slide keeps the name the deck gave it", () => {
+  const blocks = body(`<draw:page draw:name="개요"><text:p>x</text:p></draw:page>`, "presentation");
+  assert.deepEqual(blocks[0], { kind: "break", unit: "slide", index: 1, name: "개요" });
+});
+
+test("a header row the document marked is the table's header", () => {
+  const xml =
+    `<table:table table:name="T">` +
+    `<table:table-header-rows><table:table-row>` +
+    `<table:table-cell><text:p>항목</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>값</text:p></table:table-cell></table:table-row></table:table-header-rows>` +
+    `<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table>`;
+  const blocks = body(xml, "spreadsheet");
+  const table = blocks.find((block) => block.kind === "table");
+  assert.equal(table?.kind, "table");
+  if (table?.kind === "table") {
+    assert.deepEqual(table.rows.map((row) => row.header === true), [true, false]);
+  }
+});
+
+test("a spanning cell says how far it reaches", () => {
+  const xml =
+    `<table:table table:name="T"><table:table-row>` +
+    `<table:table-cell table:number-columns-spanned="2"><text:p>2026년</text:p></table:table-cell>` +
+    `<table:covered-table-cell/>` +
+    `<table:table-cell><text:p>비고</text:p></table:table-cell></table:table-row>` +
+    `<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>b</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>c</text:p></table:table-cell></table:table-row></table:table>`;
+  const table = body(xml, "spreadsheet").find((block) => block.kind === "table");
+  if (table?.kind === "table") {
+    assert.equal(table.columns, 3);
+    assert.equal(table.merged, true);
+    assert.equal(table.rows[0]?.cells[0]?.colspan, 2);
+  }
 });

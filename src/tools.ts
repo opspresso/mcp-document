@@ -24,7 +24,8 @@ import {
 } from "./limits.js";
 import { elapsedMs, logError, logInfo, logWarn } from "./log.js";
 import { parseMarkdown, withoutDirectives, type Block, type MarkdownDocument } from "./markdown.js";
-import { readDocument, UnsupportedDocument } from "./read/document.js";
+import { readBlocks, readDocument, UnsupportedDocument } from "./read/document.js";
+import { inspectBlocks } from "./read/inspect.js";
 import { inspectXlsx, XlsxError, type InspectedCell, type XlsxInspection } from "./read/xlsx.js";
 import { decodeBase64, loadSource, SourceError } from "./source.js";
 import { safeFilename } from "./filename.js";
@@ -105,6 +106,43 @@ export const TOOLS = [
           description:
             "The document's filename, e.g. 'report.hwp'. Optional, and only a hint: it helps " +
             "identify a format whose bytes are ambiguous.",
+        },
+      },
+      required: ["content"],
+    },
+  },
+  {
+    name: "inspect_document",
+    description:
+      "Describe a document's structure without writing it out. Returns one line per block — " +
+      "headings with their level, lists with their items, tables with their rows, columns, " +
+      "header row, column alignment and merged cells, images with their alt text and the part " +
+      "they point at, and slide or sheet boundaries — each with the block's true character " +
+      "count and a preview of its text. Use this when the *shape* is the question: which cells " +
+      "a table merges, whether a paragraph is a heading or just bold, where a picture sat, how " +
+      "deep a list nests. Use read_document instead when the words are what you need — this " +
+      "returns previews, not the prose. Handles DOCX, PPTX, HWP, HWPX, OpenDocument and RTF. " +
+      "XLSX is refused by name: a workbook's structure is inspect_spreadsheet's question. " +
+      "`from` and `to` page through a long document; at most 500 blocks come back per call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The document's bytes, base64-encoded." },
+        filename: {
+          type: "string",
+          description:
+            "The document's filename, e.g. 'report.hwp'. Optional, and only a hint: it helps " +
+            "identify a format whose bytes are ambiguous.",
+        },
+        from: {
+          type: "integer",
+          description: "First block index to describe, 0-based. Defaults to 0.",
+        },
+        to: {
+          type: "integer",
+          description:
+            "Last block index to describe. Defaults to 499 blocks after `from`, which is also " +
+            "the ceiling.",
         },
       },
       required: ["content"],
@@ -394,6 +432,74 @@ async function read(args: Record<string, unknown>): Promise<ToolResult> {
       }`,
       {
         operation: "read_document",
+        code: failureCode(error),
+        suggestedFix: "Pass supported document bytes as base64 and follow the reason in the message.",
+      },
+    );
+  }
+}
+
+/** A window bound, which must be a whole number and may not be negative. */
+function boundOf(value: unknown, field: string): number | undefined | ToolResult {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return failed(`Error: \`${field}\` must be a whole number, zero or greater.`, {
+      operation: "inspect_document",
+      field,
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  return value;
+}
+
+async function inspectDocument(args: Record<string, unknown>): Promise<ToolResult> {
+  const content = typeof args.content === "string" && args.content ? args.content : undefined;
+  const filename = typeof args.filename === "string" && args.filename ? args.filename : undefined;
+  const from = boundOf(args.from, "from");
+  if (from !== undefined && typeof from !== "number") {
+    return from;
+  }
+  const to = boundOf(args.to, "to");
+  if (to !== undefined && typeof to !== "number") {
+    return to;
+  }
+  try {
+    const source = loadSource({ content, filename });
+    const reading = await readBlocks(source);
+    const described = inspectBlocks(reading.blocks, {
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+    });
+    const note = described.complete
+      ? `all ${described.totalBlocks} block(s)`
+      : `block ${described.from} to ${described.to} of ${described.totalBlocks}`;
+    return ok(asUntrustedContent(source.label, described.text, note), {
+      operation: "inspect_document",
+      sourceFormat: reading.format,
+      complete: described.complete,
+      from: described.from,
+      to: described.to,
+      totalBlocks: described.totalBlocks,
+      omissions: reading.omissions,
+      ...(reading.counts ? { counts: reading.counts } : {}),
+      // The block tree is deliberately not mirrored here. Agent Studio never
+      // reads `structuredContent` when `content` is non-empty, so a second copy
+      // would double the response for a client that does not exist — and the
+      // lines above are the representation, not a rendering of one.
+    });
+  } catch (error) {
+    (error instanceof DocumentError ? logWarn : logError)("tool_failed", error, {
+      tool: "inspect_document",
+      filename,
+    });
+    return failed(
+      `Error: could not inspect the document — ${
+        error instanceof DocumentError ? error.message : describe(error)
+      }`,
+      {
+        operation: "inspect_document",
         code: failureCode(error),
         suggestedFix: "Pass supported document bytes as base64 and follow the reason in the message.",
       },
@@ -924,7 +1030,7 @@ function formatOf(name: unknown, args: Record<string, unknown>): string | undefi
   if (name === "render_document") {
     return typeof args.format === "string" ? args.format : undefined;
   }
-  if (name === "read_document") {
+  if (name === "read_document" || name === "inspect_document") {
     return extensionOf(typeof args.filename === "string" ? args.filename : undefined);
   }
   if (name === "inspect_spreadsheet") {
@@ -939,6 +1045,9 @@ function formatOf(name: unknown, args: Record<string, unknown>): string | undefi
 async function dispatch(name: unknown, args: Record<string, unknown>): Promise<ToolResult> {
   if (name === "read_document") {
     return read(args);
+  }
+  if (name === "inspect_document") {
+    return inspectDocument(args);
   }
   if (name === "inspect_spreadsheet") {
     return inspectSpreadsheet(args);

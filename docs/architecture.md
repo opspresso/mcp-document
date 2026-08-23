@@ -33,6 +33,35 @@ PDF validation reloads the file and checks the reported page count. The result
 reports this separately from visual validation, which the server does not
 perform.
 
+## Why the read model is not the write model
+
+`markdown.ts` holds a document model already, and the reading side does not use
+its union. The difference is direction. That one is, in its own header's words,
+"the greatest common denominator of DOCX, PDF and HWPX, and anything richer
+would be a feature one renderer could honour and the others would silently
+drop" — a claim about what four renderers can *draw*. A reader's subject is what
+a file *contained*, which no renderer bounds.
+
+Three kinds prove it. A cell that spans columns has no GFM syntax, so
+`parseMarkdown` could never produce one and the four renderers would gain
+nothing from a shape that carried it. An image is deliberately a link on the
+write side — `tools.ts` refuses assets for HWPX because that renderer draws a
+picture as a link — so an `image` block is exactly the "one renderer honours it,
+the others drop it" the comment warns about. And a slide boundary is a fact
+about a deck rather than a thing to lay out.
+
+So `read/blocks.ts` imports the five kinds where a document and a renderer agree
+and the whole inline vocabulary — `Run`, `ListItem`, `Align` — and adds only what
+reading needs. The two models meet where they already both speak: Markdown text.
+`blocksToMarkdown` writes `![alt](x)` and `parseMarkdown` reads it back. Neither
+imports the other's union, and the four renderers keep exhaustive `kind`
+switches with no `default`, which is what makes "handled everywhere" a compile
+error rather than a promise.
+
+The escaping that makes that meeting honest lives beside the parser, in
+`markdown.ts`, and answers with the parser's own regexes. Two files with two
+lists of the same punctuation drift the first time one of them gains a rule.
+
 ## The protocol is the SDK's; the formats are not
 
 The protocol surface was four methods, and the one dependency that mattered in

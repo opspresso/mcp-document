@@ -71,7 +71,7 @@ Tools → register with the URL ending in `/mcp` and a header
 `Authorization: Bearer <MCP_API_KEY>`. No tenant header: there is nothing left
 to partition.
 
-`read_document` and `inspect_spreadsheet` return text plus machine-readable
+`read_document`, `inspect_document` and `inspect_spreadsheet` return text plus machine-readable
 completeness, omissions and warnings. `render_document` and
 `render_spreadsheet` return a `resource` block carrying the bytes plus structural
 validation, which

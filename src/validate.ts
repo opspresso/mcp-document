@@ -5,6 +5,7 @@ import { docxToText } from "./read/docx.js";
 import { hwpxToText } from "./read/hwpx.js";
 import { pptxToText } from "./read/pptx.js";
 import { inspectXlsx } from "./read/xlsx.js";
+import { attributeOf } from "./xml.js";
 import { openZip } from "./zip.js";
 
 export class ValidationError extends DocumentError {}
@@ -56,11 +57,6 @@ const REQUIRED: Record<Exclude<RenderFormat, "pdf">, readonly string[]> = {
   ],
 };
 
-function attribute(source: string, name: string): string | undefined {
-  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(["'])(.*?)\\1`).exec(source);
-  return match?.[2];
-}
-
 function relationshipBase(name: string): string | undefined {
   if (name === "_rels/.rels") {
     return "";
@@ -83,11 +79,11 @@ function relationshipTargets(
     const xml = decoder.decode(bytes);
     for (const match of xml.matchAll(/<Relationship\b([^>]*)\/?\s*>/g)) {
       const attributes = match[1] ?? "";
-      const target = attribute(attributes, "Target");
+      const target = attributeOf(attributes, "Target");
       if (!target) {
         throw new ValidationError(`${name} has a relationship without a target`);
       }
-      if (attribute(attributes, "TargetMode") === "External") {
+      if (attributeOf(attributes, "TargetMode") === "External") {
         external += 1;
         continue;
       }

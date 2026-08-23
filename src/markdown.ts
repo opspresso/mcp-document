@@ -51,22 +51,34 @@ export interface ListItem {
  */
 export type Align = "left" | "center" | "right";
 
-export type Block =
-  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: Run[] }
-  | { kind: "paragraph"; runs: Run[] }
-  | { kind: "list"; ordered: boolean; items: ListItem[] }
-  | { kind: "code"; language?: string; text: string }
-  | { kind: "quote"; runs: Run[] }
-  | { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] }
-  | { kind: "rule" }
-  /**
-   * `:::name` … `:::` — a container that names what its contents *are*.
-   *
-   * The page renderers unwrap it and render the contents as if the fences were
-   * never written, which is the safe meaning everywhere; the PPTX planner reads
-   * the name as a slide archetype. Not nested: the first `:::` line closes.
-   */
-  | { kind: "directive"; name: string; blocks: Block[] };
+/**
+ * The eight kinds, named one at a time.
+ *
+ * `Block` is unchanged — the union below is the same shape it always was — but
+ * a name lets the *reading* side import the five kinds where a document and a
+ * renderer agree (`src/read/blocks.ts`) without importing the two where they do
+ * not. A read table carries cell spans and a read document carries pictures,
+ * and neither can join this union: `parseMarkdown` cannot produce a span, GFM
+ * has no syntax for one, and the four renderers' exhaustive `kind` switches are
+ * what make "handled everywhere" a compile error rather than a promise.
+ */
+export type Heading = { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: Run[] };
+export type Paragraph = { kind: "paragraph"; runs: Run[] };
+export type List = { kind: "list"; ordered: boolean; items: ListItem[] };
+export type Code = { kind: "code"; language?: string; text: string };
+export type Quote = { kind: "quote"; runs: Run[] };
+export type Table = { kind: "table"; header: Run[][]; rows: Run[][][]; align: Align[] };
+export type Rule = { kind: "rule" };
+/**
+ * `:::name` … `:::` — a container that names what its contents *are*.
+ *
+ * The page renderers unwrap it and render the contents as if the fences were
+ * never written, which is the safe meaning everywhere; the PPTX planner reads
+ * the name as a slide archetype. Not nested: the first `:::` line closes.
+ */
+export type Directive = { kind: "directive"; name: string; blocks: Block[] };
+
+export type Block = Heading | Paragraph | List | Code | Quote | Table | Rule | Directive;
 
 export interface MarkdownDocument {
   blocks: Block[];
@@ -97,8 +109,18 @@ const TABLE_DIVIDER = /^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/;
 
 type Style = Omit<Run, "text">;
 
-/** Characters a backslash may escape, which is the punctuation Markdown gives meaning to. */
-const ESCAPABLE = /[\\`*_{}[\]()#+\-.!|>~]/;
+/**
+ * Characters a backslash may escape, which is the punctuation Markdown gives
+ * meaning to.
+ *
+ * `:` earns its place from the other direction. `escapeInline` has to be able
+ * to write any text as a paragraph, and `:::cards` is the one block opener
+ * whose marker held no escapable character — so a document that said it came
+ * back as a directive nobody wrote. CommonMark escapes every ASCII punctuation
+ * mark; this list stays the subset the dialect uses, plus the one it needs to
+ * be able to say no with.
+ */
+const ESCAPABLE = /[\\`*_{}[\]()#+\-.!|>~:]/;
 
 function styled(text: string, style: Style): Run {
   return { text, ...style };
@@ -111,7 +133,7 @@ function styled(text: string, style: Style): Run {
  * markup, and parsing `a*b*c` into three runs where one would do makes the
  * output larger and the line breaker's job harder for no visible difference.
  */
-function merge(runs: Run[]): Run[] {
+export function mergeRuns(runs: readonly Run[]): Run[] {
   const out: Run[] = [];
   for (const run of runs) {
     if (run.text === "") {
@@ -141,7 +163,7 @@ function merge(runs: Run[]): Run[] {
  * identifier into a different identifier, silently. `*` has no such problem
  * because nothing writes it inside a word.
  */
-function underscoreOpensEmphasis(source: string, index: number): boolean {
+export function underscoreOpensEmphasis(source: string, index: number): boolean {
   const before = index === 0 ? "" : source[index - 1];
   return before === undefined || before === "" || !/[\p{L}\p{N}_]/u.test(before);
 }
@@ -183,18 +205,19 @@ export function parseInline(source: string, style: Style = {}, depth = 0): Run[]
       // Nothing here fetches or embeds pictures, so an image becomes a link to
       // where the picture is. Its label is not parsed as inline markup: alt
       // text is a description, and `*` in it is an asterisk.
-      const image = /^!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)(?:\s+"[^"]*")?\s*\)/.exec(rest);
+      const image = /^!\[((?:\\.|[^\]\\])*)\]\(\s*(<[^>]*>|[^)\s]*)(?:\s+"[^"]*")?\s*\)/.exec(rest);
       if (image) {
         const href = image[2]!.replace(/^<|>$/g, "");
         flush();
-        runs.push(styled(image[1] || "image", { ...style, href }));
+        const alt = image[1]!.replace(/\\(.)/g, "$1");
+        runs.push(styled(alt || "image", { ...style, href }));
         index += image[0].length;
         continue;
       }
     }
 
     if (here === "[") {
-      const link = /^\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)(?:\s+"[^"]*")?\s*\)/.exec(rest);
+      const link = /^\[((?:\\.|[^\]\\])*)\]\(\s*(<[^>]*>|[^)\s]*)(?:\s+"[^"]*")?\s*\)/.exec(rest);
       if (link) {
         const href = link[2]!.replace(/^<|>$/g, "");
         const label = link[1] === "" ? href : link[1]!;
@@ -227,7 +250,7 @@ export function parseInline(source: string, style: Style = {}, depth = 0): Run[]
     index += 1;
   }
   flush();
-  return merge(runs);
+  return mergeRuns(runs);
 }
 
 /** `| a | b |` → the cells, with the outer pipes and the padding gone. */
@@ -424,4 +447,152 @@ export function withoutDirectives(document: MarkdownDocument): MarkdownDocument 
   const flatten = (blocks: readonly Block[]): Block[] =>
     blocks.flatMap((block) => (block.kind === "directive" ? flatten(block.blocks) : [block]));
   return { ...document, blocks: flatten(document.blocks) };
+}
+
+/**
+ * The dialect, written rather than read.
+ *
+ * The inverse lives beside the parser because that is the only place it can be
+ * kept honest: escaping has to cover exactly what parsing gives meaning to, and
+ * two files with two lists of the same punctuation drift the first time one of
+ * them gains a rule. `opensBlock` is the load-bearing piece — it answers with
+ * the parser's own regexes, which stay private, so changing a regex moves both
+ * directions at once.
+ */
+
+/**
+ * Whether a line, standing alone, parses as anything but a paragraph.
+ *
+ * Every block opener in one predicate: a heading's `#`, a rule, a fence, a
+ * quote, a list marker, a `:::` directive fence, and a bare divider row.
+ */
+export function opensBlock(line: string): boolean {
+  return (
+    HEADING.test(line) ||
+    RULE.test(line) ||
+    FENCE.test(line) ||
+    QUOTE.test(line) ||
+    LIST_ITEM.test(line) ||
+    DIRECTIVE_OPEN.test(line) ||
+    DIRECTIVE_CLOSE.test(line) ||
+    TABLE_DIVIDER.test(line)
+  );
+}
+
+/**
+ * Text, with exactly what `parseInline` would otherwise re-read escaped.
+ *
+ * `\`, backtick, `*`, `[` and `]` always: the first three open markup wherever
+ * they stand, and the brackets are what a link's `\[([^\]]*)\]` reads — a `]`
+ * inside a label ends it early and the rest of the label becomes prose.
+ *
+ * `_` only where it would open emphasis, which is `underscoreOpensEmphasis`'s
+ * question and not a second opinion about it. Escaping every one of them would
+ * turn `snake_case_name` into `snake\_case\_name` in text a person reads.
+ *
+ * `!` needs nothing: an image is `![`, and the `[` is already gone.
+ */
+export function escapeInline(text: string): string {
+  let out = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (character === "\\" || character === "`" || character === "*" || character === "[" || character === "]") {
+      out += `\\${character}`;
+      continue;
+    }
+    if (character === "_" && underscoreOpensEmphasis(text, index)) {
+      out += "\\_";
+      continue;
+    }
+    out += character;
+  }
+  return out;
+}
+
+/**
+ * A line written where a block may start, with its opener defused.
+ *
+ * The escape is chosen by asking `opensBlock` again rather than by knowing
+ * which marker matched: `1. ` needs the `.` escaped and not the `1`, `|---|`
+ * needs its first pipe, and a rule needs its first dash. One loop over the
+ * marker's own characters answers all of them, and cannot disagree with the
+ * predicate it is defusing.
+ */
+export function escapeLineStart(text: string): string {
+  if (!opensBlock(text)) {
+    return text;
+  }
+  // A marker is punctuation and a little whitespace; past that the line is
+  // prose and escaping inside it would be noise for nothing.
+  const reach = Math.min(text.length, 16);
+  for (let index = 0; index < reach; index += 1) {
+    if (!ESCAPABLE.test(text[index]!)) {
+      continue;
+    }
+    const defused = `${text.slice(0, index)}\\${text.slice(index)}`;
+    if (!opensBlock(defused)) {
+      return defused;
+    }
+  }
+  return text;
+}
+
+/**
+ * A code span's fence: one backtick longer than the longest run inside it.
+ *
+ * Mirrors the parser's `` /^(`+)([\s\S]*?)\1/ ``, which is what lets a span
+ * hold backticks at all.
+ */
+function fenceInline(text: string): string {
+  const runs = [...text.matchAll(/`+/g)].map((match) => match[0].length);
+  const fence = "`".repeat(Math.max(0, ...runs) + 1);
+  return `${fence}${text}${fence}`;
+}
+
+/**
+ * Emphasis delimiters need something other than a space beside them.
+ *
+ * `parseInline` requires `(?=\S)` after the opener and `(?<=\S)` before the
+ * closer, so `**  bold  **` is not bold — it is four asterisks and a word. The
+ * padding is re-emitted outside the delimiters, and a run that is nothing but
+ * whitespace gets none at all. This is the quietest way for a serializer to be
+ * wrong: nothing errors, the emphasis simply stops being emphasis.
+ */
+function wrap(text: string, delimiter: string): string {
+  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text);
+  const lead = match?.[1] ?? "";
+  const core = match?.[2] ?? "";
+  const trail = match?.[3] ?? "";
+  return core === "" ? text : `${lead}${delimiter}${core}${delimiter}${trail}`;
+}
+
+/** A link target, angled when it holds what would end it early. */
+function linkTarget(href: string): string {
+  if (!/[\s()<>]/.test(href)) {
+    return href;
+  }
+  // `<[^>]*>` is what the parser accepts, so a `>` inside the target has to
+  // stop being one. Percent-encoding is what a URL does with it anyway.
+  return `<${href.replace(/>/g, "%3E")}>`;
+}
+
+/** Runs as Markdown: `**bold**`, `` `code` ``, `[label](href)`. */
+export function renderRuns(runs: readonly Run[]): string {
+  return mergeRuns(runs)
+    .map((run) => {
+      let text = run.code ? fenceInline(run.text) : escapeInline(run.text);
+      // `***x***` is not bold italic to this parser: the strong pattern is lazy,
+      // so it closes on the first `**` it reaches and leaves an asterisk behind.
+      // The inner delimiter has to be the other one — and it is the *inner* one
+      // because `_` only opens emphasis after a non-word character, which `*`
+      // always is and the run before this one may not be.
+      if (run.italic) {
+        text = wrap(text, run.bold ? "_" : "*");
+      }
+      if (run.bold) {
+        text = wrap(text, "**");
+      }
+      return run.href ? `[${text}](${linkTarget(run.href)})` : text;
+    })
+    .join("");
 }

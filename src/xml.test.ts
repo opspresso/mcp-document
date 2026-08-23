@@ -7,7 +7,16 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { decodeXmlEntities, escapeXml, walkXml, XmlError, type XmlHandler } from "./xml.js";
+import {
+  attributeOf,
+  attributesOf,
+  decodeXmlEntities,
+  escapeXml,
+  localName,
+  walkXml,
+  XmlError,
+  type XmlHandler,
+} from "./xml.js";
 
 interface Event {
   kind: "text" | "open" | "close";
@@ -102,4 +111,42 @@ test("a numeric reference that cannot be a character is dropped, not made U+FFFD
 test("escaping round-trips through decoding", () => {
   const raw = `<a href="x">&'한글'</a>`;
   assert.equal(decodeXmlEntities(escapeXml(raw)), raw);
+});
+
+test("a prefix is stripped, and a name without one is left alone", () => {
+  assert.equal(localName("table:table-cell"), "table-cell");
+  assert.equal(localName("p"), "p");
+  // Only the first colon: a local name may not contain one, so anything after
+  // the second belongs to the name rather than to a second prefix.
+  assert.equal(localName("a:b:c"), "b:c");
+});
+
+test("an attribute is found however the writer quoted it", () => {
+  // XML allows both, `endOfTag` already tracks both, and the three readers that
+  // carried a copy of this matched only double quotes — so a single-quoted
+  // value read as an absent one, which is "no heading", "no colspan", "no link".
+  assert.equal(attributeOf('w:val="Heading1"', "w:val"), "Heading1");
+  assert.equal(attributeOf("w:val='Heading1'", "w:val"), "Heading1");
+  assert.equal(attributeOf('w:val="x"', "w:other"), undefined);
+});
+
+test("an attribute value is decoded, because targets and names carry ampersands", () => {
+  assert.equal(attributeOf('name="A&amp;B"', "name"), "A&B");
+  assert.equal(attributeOf('Target="q?a=1&amp;b=2"', "Target"), "q?a=1&b=2");
+  assert.equal(attributeOf('descr="&#54620;&#xAE00;"', "descr"), "한글");
+});
+
+test("an attribute name is matched whole, not as the start of a longer one", () => {
+  assert.equal(attributeOf('text:continue-numbering="true"', "text:c"), undefined);
+  assert.equal(attributeOf('xtext:c="1"', "text:c"), undefined);
+  assert.equal(attributeOf('text:c="4"', "text:c"), "4");
+});
+
+test("every attribute at once, first value wins", () => {
+  const found = attributesOf(`a="1" b='2' c="&amp;" a="3"`);
+  assert.deepEqual([...found], [
+    ["a", "1"],
+    ["b", "2"],
+    ["c", "&"],
+  ]);
 });

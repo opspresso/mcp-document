@@ -19,7 +19,7 @@
  * document's own units — the same contract the other readers keep.
  */
 
-import { walkXml, type XmlHandler } from "../xml.js";
+import { attributeOf, localName, walkXml, type XmlHandler } from "../xml.js";
 import { openZip } from "../zip.js";
 import { DocumentError } from "../errors.js";
 import {
@@ -33,6 +33,82 @@ export class XlsxError extends DocumentError {}
 const WORKBOOK = "xl/workbook.xml";
 const WORKBOOK_RELS = "xl/_rels/workbook.xml.rels";
 const SHARED_STRINGS = "xl/sharedStrings.xml";
+const STYLES = "xl/styles.xml";
+
+/**
+ * Number formats that mean a date or a time, by their built-in id.
+ *
+ * A date is stored as a serial number, so without this a date column comes
+ * back as `45123` — not merely lossy, but a number that reads as data. Only
+ * the unambiguous ids and format codes are converted: emulating currency,
+ * locale separators or a conditional format would be a plausible-but-wrong
+ * generator, and a raw value is honest where a guess is not.
+ */
+const DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+
+/** Whether a custom format code says date or time and nothing else. */
+function looksLikeDate(code: string): boolean {
+  const bare = code.replace(/\[[^\]]*\]/g, "").replace(/"[^"]*"/g, "");
+  return /[dmyhs]/i.test(bare) && !/[#0?]/.test(bare) && !/[$€£¥%]/.test(bare);
+}
+
+/** Cell style index → whether that style formats its number as a date. */
+export function dateStylesOf(xml: string): Set<number> {
+  const custom = new Map<number, string>();
+  for (const match of xml.matchAll(/<(?:\w+:)?numFmt\b([^>]*)\/?>/g)) {
+    const attributes = match[1] ?? "";
+    const id = Number(attributeOf(attributes, "numFmtId") ?? "");
+    const code = attributeOf(attributes, "formatCode");
+    if (Number.isInteger(id) && code !== undefined) {
+      custom.set(id, code);
+    }
+  }
+  const dates = new Set<number>();
+  const cellXfs = /<(?:\w+:)?cellXfs\b[^>]*>([\s\S]*?)<\/(?:\w+:)?cellXfs>/.exec(xml);
+  if (!cellXfs?.[1]) {
+    return dates;
+  }
+  let index = 0;
+  for (const match of cellXfs[1].matchAll(/<(?:\w+:)?xf\b([^>]*)\/?>/g)) {
+    const attributes = match[1] ?? "";
+    const id = Number(attributeOf(attributes, "numFmtId") ?? "");
+    const applies = attributeOf(attributes, "applyNumberFormat");
+    if (
+      applies !== "0" &&
+      Number.isInteger(id) &&
+      (DATE_FORMATS.has(id) || looksLikeDate(custom.get(id) ?? ""))
+    ) {
+      dates.add(index);
+    }
+    index += 1;
+  }
+  return dates;
+}
+
+/**
+ * A serial number as an ISO date, or nothing when it is not one.
+ *
+ * Two landmines, both well known and both silent. Excel's day 60 is the
+ * 1900-02-29 that never happened, so every serial past it is one day ahead of
+ * a naive epoch. And a workbook authored on a Mac may declare `date1904`,
+ * where the same serial means a date four years and a day later.
+ */
+export function serialToIso(serial: number, epoch1904: boolean): string | undefined {
+  if (!Number.isFinite(serial) || serial < 0 || serial > 2_958_465) {
+    return undefined;
+  }
+  const days = epoch1904 ? serial : serial < 60 ? serial : serial - 1;
+  const base = epoch1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 31);
+  const at = base + Math.round(days * 86_400_000);
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  const iso = date.toISOString();
+  // A whole day carries no clock; a fraction does, and dropping it would say
+  // "09:30" and "17:45" were the same moment.
+  return serial % 1 === 0 ? iso.slice(0, 10) : iso.slice(0, 19).replace("T", " ");
+}
 
 export interface XlsxText {
   text: string;
@@ -66,16 +142,6 @@ export interface XlsxInspection {
   complete: boolean;
   externalLinks: number;
   macroEnabled: boolean;
-}
-
-function localName(name: string): string {
-  const colon = name.indexOf(":");
-  return colon === -1 ? name : name.slice(colon + 1);
-}
-
-function attribute(attributes: string, name: string): string | undefined {
-  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*"([^"]*)"`).exec(attributes);
-  return match?.[1];
 }
 
 /**
@@ -150,6 +216,8 @@ class Sheet implements XmlHandler {
   private row = 0;
   private address = "";
   private type = "";
+  /** The cell's `@s`, which is an index into `cellXfs` in `xl/styles.xml`. */
+  private style: number | undefined;
   private buffer = "";
   private formula = "";
   private capturing = false;
@@ -164,6 +232,9 @@ class Sheet implements XmlHandler {
     private readonly shared: readonly string[],
     private readonly keepRows = true,
     private readonly inspectionLimit = 0,
+    /** Cell-style indices whose number format means a date or a time. */
+    private readonly dates: ReadonlySet<number> = new Set(),
+    private readonly epoch1904 = false,
   ) {}
 
   text(value: string): void {
@@ -179,7 +250,7 @@ class Sheet implements XmlHandler {
     switch (localName(name)) {
       case "row":
         this.cells = [];
-        this.row = Number(attribute(attributes, "r")) || this.rowCount + 1;
+        this.row = Number(attributeOf(attributes, "r")) || this.rowCount + 1;
         return;
       case "c": {
         this.cellCount += 1;
@@ -188,8 +259,10 @@ class Sheet implements XmlHandler {
             `a worksheet has more than ${MAX_SPREADSHEET_CELLS.toLocaleString("en-US")} cells`,
           );
         }
-        this.type = attribute(attributes, "t") ?? "";
-        const reference = attribute(attributes, "r");
+        this.type = attributeOf(attributes, "t") ?? "";
+        const styled = Number(attributeOf(attributes, "s") ?? "");
+        this.style = Number.isInteger(styled) ? styled : undefined;
+        const reference = attributeOf(attributes, "r");
         // Absent addresses mean "the next column", which is what a writer that
         // omits them intends.
         this.column = reference ? columnOf(reference) : this.cells.length;
@@ -260,6 +333,14 @@ class Sheet implements XmlHandler {
       const index = Number(this.buffer);
       return Number.isInteger(index) ? (this.shared[index] ?? "") : "";
     }
+    // A boolean is stored as `0` or `1`, so a column of them read as numbers —
+    // which is not merely lossy, it is a different kind of answer.
+    if (this.type === "b") {
+      return this.buffer === "1" ? "TRUE" : this.buffer === "0" ? "FALSE" : this.buffer;
+    }
+    if (this.type === "" && this.style !== undefined && this.dates.has(this.style)) {
+      return serialToIso(Number(this.buffer), this.epoch1904) ?? this.buffer;
+    }
     return this.buffer;
   }
 
@@ -321,8 +402,8 @@ function sheetParts(
   const targets = new Map<string, string>();
   if (rels) {
     for (const match of rels.matchAll(/<Relationship\b([^>]*)>/g)) {
-      const id = attribute(match[1] ?? "", "Id");
-      const target = attribute(match[1] ?? "", "Target");
+      const id = attributeOf(match[1] ?? "", "Id");
+      const target = attributeOf(match[1] ?? "", "Target");
       if (id && target) {
         // Targets are relative to `xl/`, and some writers make that explicit.
         targets.set(id, `xl/${target.replace(/^\/?(xl\/)?/, "")}`);
@@ -336,12 +417,12 @@ function sheetParts(
   }> = [];
   for (const match of workbook.matchAll(/<(?:\w+:)?sheet\b([^>]*)\/?>/g)) {
     const attributes = match[1] ?? "";
-    const name = attribute(attributes, "name");
+    const name = attributeOf(attributes, "name");
     if (!name) {
       continue;
     }
-    const id = attribute(attributes, "r:id") ?? attribute(attributes, "id");
-    const declaredState = attribute(attributes, "state");
+    const id = attributeOf(attributes, "r:id") ?? attributeOf(attributes, "id");
+    const declaredState = attributeOf(attributes, "state");
     const state =
       declaredState === "hidden" || declaredState === "veryHidden" ? declaredState : "visible";
     // The relationship is authoritative; the conventional path is the fallback
@@ -370,7 +451,7 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
   }
 
   const decoder = new TextDecoder();
-  const head = read([WORKBOOK, WORKBOOK_RELS, SHARED_STRINGS]);
+  const head = read([WORKBOOK, WORKBOOK_RELS, SHARED_STRINGS, STYLES]);
   const workbookXml = head.get(WORKBOOK);
   const sheets = sheetParts(
     workbookXml ? decoder.decode(workbookXml) : undefined,
@@ -386,6 +467,13 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
     walkXml(decoder.decode(sharedXml), shared);
   }
   const strings = shared.done();
+  const stylesXml = head.get(STYLES);
+  const dates = stylesXml === undefined ? new Set<number>() : dateStylesOf(decoder.decode(stylesXml));
+  // A Mac-authored workbook counts from 1904, where the same serial is four
+  // years and a day later.
+  const epoch1904 = /date1904\s*=\s*["'](?:1|true)["']/.test(
+    workbookXml ? decoder.decode(workbookXml) : "",
+  );
 
   const visibleSheets = sheets.filter((sheet) => sheet.state === "visible");
   const hiddenSheets = sheets.length - visibleSheets.length;
@@ -404,7 +492,7 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
     if (!part) {
       continue;
     }
-    const reader = new Sheet(strings);
+    const reader = new Sheet(strings, true, 0, dates, epoch1904);
     walkXml(decoder.decode(part), reader);
     const rows = reader.done();
     total += rows.length;
@@ -453,7 +541,7 @@ export function inspectXlsx(bytes: Uint8Array, includeHidden = false): XlsxInspe
   }
 
   const decoder = new TextDecoder();
-  const head = read([WORKBOOK, WORKBOOK_RELS, SHARED_STRINGS]);
+  const head = read([WORKBOOK, WORKBOOK_RELS, SHARED_STRINGS, STYLES]);
   const workbookXml = head.get(WORKBOOK);
   const sheets = sheetParts(
     workbookXml ? decoder.decode(workbookXml) : undefined,
@@ -469,6 +557,13 @@ export function inspectXlsx(bytes: Uint8Array, includeHidden = false): XlsxInspe
     walkXml(decoder.decode(sharedXml), shared);
   }
   const strings = shared.done();
+  const stylesXml = head.get(STYLES);
+  const dates = stylesXml === undefined ? new Set<number>() : dateStylesOf(decoder.decode(stylesXml));
+  // A Mac-authored workbook counts from 1904, where the same serial is four
+  // years and a day later.
+  const epoch1904 = /date1904\s*=\s*["'](?:1|true)["']/.test(
+    workbookXml ? decoder.decode(workbookXml) : "",
+  );
 
   const visible = includeHidden ? sheets : sheets.filter((sheet) => sheet.state === "visible");
   const wanted = visible.map((sheet) => sheet.path).filter((path) => names.includes(path));
@@ -485,7 +580,7 @@ export function inspectXlsx(bytes: Uint8Array, includeHidden = false): XlsxInspe
     if (!part) {
       continue;
     }
-    const reader = new Sheet(strings, false, remaining);
+    const reader = new Sheet(strings, false, remaining, dates, epoch1904);
     walkXml(decoder.decode(part), reader);
     const result = reader.inspection();
     inspected.push({ name: sheet.name, state: sheet.state, cells: result.cells, totalCells: result.totalCells });

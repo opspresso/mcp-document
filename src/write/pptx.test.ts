@@ -128,12 +128,12 @@ test("a level 1 or 2 heading opens a slide and becomes its title", () => {
   assert.equal(rendered.slides, 3);
   assert.equal(
     pptxToText(rendered.bytes).text,
-    "## Slide 1\n표지\n\n## Slide 2\n하나\na\n\n## Slide 3\n둘\nb",
+    "## Slide 1\n\n### 표지\n\n## Slide 2\n\n### 하나\n\na\n\n## Slide 3\n\n### 둘\n\nb",
   );
 });
 
 test("a level 3 heading stays in the body rather than opening a slide", () => {
-  assert.equal(roundTrip("## 하나\n\n### 안쪽\n\n본문"), "## Slide 1\n하나\n안쪽\n본문");
+  assert.equal(roundTrip("## 하나\n\n### 안쪽\n\n본문"), "## Slide 1\n\n### 하나\n\n**안쪽**\n\n본문");
 });
 
 test("the deck opens on a cover only when the document does", () => {
@@ -160,7 +160,7 @@ test("every slide is registered in the presentation, and every one has a layout"
 
 test("styled text keeps its characters, and the styling is in the markup", () => {
   const bytes = build("## s\n\nplain **bold** and *italic* and `code`");
-  assert.ok(pptxToText(bytes).text.includes("plain bold and italic and code"));
+  assert.ok(pptxToText(bytes).text.includes("plain **bold** and *italic* and code"));
   const slide = partOf(bytes, "ppt/slides/slide1.xml");
   assert.ok(slide.includes(' b="1"'), "bold should be a run property");
   assert.ok(slide.includes(' i="1"'), "italic should be a run property");
@@ -207,7 +207,7 @@ test("a table names the default style, and the style part defines it", () => {
 
 test("a table becomes a table, and every cell has a paragraph in it", () => {
   const bytes = build("## s\n\n| 이름 | 값 |\n|---|---|\n| a | 1 |\n| b |  |");
-  assert.ok(pptxToText(bytes).text.includes("이름 | 값\na | 1\nb"));
+  assert.ok(pptxToText(bytes).text.includes("| **이름** | **값** |\n| --- | --- |\n| a | 1 |\n| b |  |"));
   const slide = partOf(bytes, "ppt/slides/slide1.xml");
   assert.ok(slide.includes("<a:tbl>"), "a table should be a graphic frame holding a:tbl");
   // A cell with no paragraph in it is what makes PowerPoint call a file corrupt.
@@ -249,14 +249,16 @@ test("a slide is numbered by a field whose cached text stays out of extraction",
     "the cover is not numbered",
   );
   // The reader skips fld contents, so the cache never reaches the model.
-  assert.equal(pptxToText(bytes).text, "## Slide 1\n표지\n\n## Slide 2\n본문\n내용");
+  assert.equal(pptxToText(bytes).text, "## Slide 1\n\n### 표지\n\n## Slide 2\n\n### 본문\n\n내용");
 });
 
 test("lists carry their markers, and a nested list numbers from one", () => {
-  assert.equal(roundTrip("## s\n\n- one\n- two"), "## Slide 1\ns\n• one\n• two");
+  assert.equal(roundTrip("## s\n\n- one\n- two"), "## Slide 1\n\n### s\n\n- one\n- two");
   assert.equal(
     roundTrip("## s\n\n1. a\n  1. a.1\n  2. a.2\n2. b"),
-    "## Slide 1\ns\n1. a\n1. a.1\n2. a.2\n2. b",
+    // The numbers are the ones the deck drew: a nested run restarts at 1 and
+    // says so, rather than being renumbered into a single flat list.
+    "## Slide 1\n\n### s\n\n1. a\n\n1. a.1\n2. a.2\n\n2. b",
   );
 });
 
@@ -268,10 +270,10 @@ test("content past the bottom continues on the next slide, titled as such", () =
   });
   assert.equal(rendered.slides, 2);
   const text = pptxToText(rendered.bytes).text;
-  assert.ok(text.includes("## Slide 2\n목록 (계속)"), text);
+  assert.ok(text.includes("## Slide 2\n\n### 목록 (계속)"), text);
   // Nothing is dropped in the move: every item is on one slide or the other.
   for (let item = 1; item <= 20; item += 1) {
-    assert.ok(text.includes(`• 항목 ${item}\n`) || text.endsWith(`• 항목 ${item}`));
+    assert.ok(text.includes(`- 항목 ${item}\n`) || text.endsWith(`- 항목 ${item}`));
   }
 });
 
@@ -292,19 +294,26 @@ test("a table too tall for one slide splits by row, with its header repeated", (
   });
   assert.ok(rendered.slides > 1, "twenty rows should not fit on one slide");
   const text = pptxToText(rendered.bytes).text;
-  assert.equal(text.match(/이름 \| 값/g)?.length, rendered.slides, "each slide repeats the header");
+  assert.equal(
+    text.match(/\| \*\*이름\*\* \| \*\*값\*\* \|/g)?.length,
+    rendered.slides,
+    "each slide repeats the header",
+  );
   assert.ok(text.includes("행 20"), "no row is lost in the split");
 });
 
 test("a code block keeps its lines", () => {
   assert.equal(
     roundTrip("## s\n\n```ts\nconst a = 1;\nconst b = 2;\n```"),
-    "## Slide 1\ns\nconst a = 1;\nconst b = 2;",
+    "## Slide 1\n\n### s\n\nconst a = 1;\n\nconst b = 2;",
   );
 });
 
 test("XML metacharacters in the text do not become markup", () => {
-  assert.equal(roundTrip('## s\n\na < b & c > d "quoted"'), '## Slide 1\ns\na < b & c > d "quoted"');
+  assert.equal(
+    roundTrip('## s\n\na < b & c > d "quoted"'),
+    '## Slide 1\n\n### s\n\na < b & c > d "quoted"',
+  );
 });
 
 test("the title lands in the document properties, escaped", () => {
@@ -341,9 +350,10 @@ test("a mid-document # is a numbered divider, and its content follows it", () =>
   // Cover, divider 01, its content, divider 02.
   assert.equal(rendered.slides, 4);
   const text = pptxToText(rendered.bytes).text;
-  assert.ok(text.includes("## Slide 2\n01\n첫 장"), text);
-  assert.ok(text.includes("## Slide 3\n첫 장\n내용 하나"), text);
-  assert.ok(text.includes("## Slide 4\n02\n둘째 장"), text);
+  // The divider number is a bold line of its own above the section title.
+  assert.ok(text.includes("## Slide 2\n\n**01**\n\n### 첫 장"), text);
+  assert.ok(text.includes("## Slide 3\n\n### 첫 장\n\n내용 하나"), text);
+  assert.ok(text.includes("## Slide 4\n\n**02**\n\n### 둘째 장"), text);
   // The divider takes the section layout; its content slide does not.
   assert.ok(partOf(rendered.bytes, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout3.xml"));
   assert.ok(partOf(rendered.bytes, "ppt/slides/_rels/slide3.xml.rels").includes("slideLayout2.xml"));
@@ -356,8 +366,8 @@ test("a cover keeps its subtitle and sends everything else onward", () => {
   );
   assert.equal(rendered.slides, 2, "the list moves past the cover");
   const text = pptxToText(rendered.bytes).text;
-  assert.ok(text.includes("## Slide 1\n제목\n부제목 한 줄"), text);
-  assert.ok(text.includes("## Slide 2\n• 항목 하나"), text);
+  assert.ok(text.includes("## Slide 1\n\n### 제목\n\n부제목 한 줄"), text);
+  assert.ok(text.includes("## Slide 2\n\n- 항목 하나"), text);
 });
 
 test("a final thank-you section is a closing slide; the same title mid-deck is not", () => {
@@ -390,7 +400,7 @@ test("a cards section renders one rounded shape per card, carrying its own text"
   assert.equal(slide.match(/prst="roundRect"/g)?.length, 2, "one roundRect per card");
   // The card is the shape and the text is inside it: dragging one drags both.
   assert.match(slide, /roundRect[\s\S]*?Automation/);
-  assert.ok(pptxToText(bytes).text.includes("Automation\n반복 작업 자동화"));
+  assert.ok(pptxToText(bytes).text.includes("**Automation**\n\n반복 작업 자동화"));
 });
 
 test("a metrics section sets the figure large and the label under it", () => {
@@ -418,7 +428,7 @@ test("a comparison renders two chips with the column lines beneath", () => {
   assert.equal(slide.match(/prst="roundRect"/g)?.length, 2, "one chip per column");
   const text = pptxToText(bytes).text;
   assert.ok(text.indexOf("IRSA") < text.indexOf("표준 방식"), "chip precedes its lines");
-  assert.ok(text.includes("• 신규 권장"), text);
+  assert.ok(text.includes("- 신규 권장"), text);
 });
 
 test("a process is a row of nodes with arrows between, reading back as the list it was", () => {
@@ -465,7 +475,7 @@ test("an overflowing slide breaks before the last sub-heading, which titles the 
   );
   // The topic moved whole: its heading is now the continuation's title, and
   // nothing of it stayed behind on the first slide.
-  assert.ok(text.includes("## Slide 2\n아키텍처 — Control Plane\n• 정책 관리"), text);
+  assert.ok(text.includes("## Slide 2\n\n### 아키텍처 — Control Plane\n\n- 정책 관리"), text);
   assert.equal(text.includes("(계속)"), false, text);
 });
 

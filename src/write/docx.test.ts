@@ -76,14 +76,14 @@ test("the page number is a field, and the footer it sits in is wired to the sect
 test("headings survive with their level, the cover set apart by its page break", () => {
   // The opening `#` is now a cover page; the blank line in the extraction is
   // the page break between the cover and the body, honestly reported.
-  assert.equal(roundTrip("# 제목\n\n## 부제\n\n본문"), "# 제목\n\n## 부제\n본문");
+  assert.equal(roundTrip("# 제목\n\n## 부제\n\n본문"), "# 제목\n\n## 부제\n\n본문");
   // Without a leading `#` there is no cover and nothing changes.
-  assert.equal(roundTrip("## 부제\n\n본문"), "## 부제\n본문");
+  assert.equal(roundTrip("## 부제\n\n본문"), "## 부제\n\n본문");
 });
 
 test("styled text keeps its characters, and the styling is in the markup", () => {
   const bytes = build("plain **bold** and *italic* and `code`");
-  assert.equal(docxToText(bytes).text, "plain bold and italic and code");
+  assert.equal(docxToText(bytes).text, "plain **bold** and *italic* and code");
   const body = partOf(bytes, "word/document.xml");
   assert.ok(body.includes("<w:b/>"), "bold should be a run property");
   assert.ok(body.includes("<w:i/>"), "italic should be a run property");
@@ -93,7 +93,7 @@ test("styled text keeps its characters, and the styling is in the markup", () =>
 test("a run's leading and trailing spaces are preserved", () => {
   // Without `xml:space="preserve"` Word drops them and closes the gap, so
   // `**bold** text` comes out as `boldtext`.
-  assert.equal(roundTrip("**bold** text"), "bold text");
+  assert.equal(roundTrip("**bold** text"), "**bold** text");
   assert.ok(partOf(build("a b"), "word/document.xml").includes('xml:space="preserve"'));
 });
 
@@ -115,12 +115,12 @@ test("lists come back as the markers they were written with", () => {
 
 test("a nested list numbers from one each time it is entered", () => {
   const text = roundTrip("1. a\n  1. a.1\n  2. a.2\n2. b\n  1. b.1");
-  assert.equal(text, "1. a\n1. a.1\n2. a.2\n2. b\n1. b.1");
+  assert.equal(text, "1. a\n  1. a.1\n  2. a.2\n2. b\n  1. b.1");
 });
 
 test("a table becomes a table, and every cell has a paragraph in it", () => {
   const bytes = build("| 이름 | 값 |\n|---|---|\n| a | 1 |\n| b |  |");
-  assert.equal(docxToText(bytes).text, "이름 | 값\na | 1\nb");
+  assert.equal(docxToText(bytes).text, "| **이름** | **값** |\n| --- | --- |\n| a | 1 |\n| b |  |");
   const body = partOf(bytes, "word/document.xml");
   // A `w:tc` with no `w:p` inside is what makes Word call a file corrupt.
   assert.equal(/<w:tc>(?:(?!<w:p[ />]).)*<\/w:tc>/s.test(body), false);
@@ -146,7 +146,7 @@ test("a column asked to be set right is set right, and a plain one is untouched"
 
 test("a link is a hyperlink with a relationship behind it", () => {
   const bytes = build("see [the spec](https://example.com/s)");
-  assert.equal(docxToText(bytes).text, "see the spec");
+  assert.equal(docxToText(bytes).text, "see [the spec](https://example.com/s)");
   const body = partOf(bytes, "word/document.xml");
   const id = /<w:hyperlink r:id="(rId\d+)">/.exec(body)?.[1];
   assert.ok(id, "the link should be a w:hyperlink");
@@ -169,7 +169,7 @@ test("the same target twice reuses its relationship", () => {
 });
 
 test("a code block keeps its lines", () => {
-  assert.equal(roundTrip("```ts\nconst a = 1;\nconst b = 2;\n```"), "const a = 1;\nconst b = 2;");
+  assert.equal(roundTrip("```ts\nconst a = 1;\nconst b = 2;\n```"), "const a = 1;\n\nconst b = 2;");
 });
 
 test("XML metacharacters in the text do not become markup", () => {
@@ -238,8 +238,9 @@ test("a mid-document # opens a numbered chapter on a fresh page", () => {
   const body = partOf(bytes, "word/document.xml");
   assert.equal(body.match(/<w:pageBreakBefore\/>/g)?.length, 2, "each chapter starts a page");
   const text = docxToText(bytes).text;
-  assert.ok(text.includes("01\n# 첫 장"), text);
-  assert.ok(text.includes("02\n# 둘째 장"), text);
+  // The chapter number is set bold, and the reader recovers that now.
+  assert.ok(text.includes("**01**\n\n# 첫 장"), text);
+  assert.ok(text.includes("**02**\n\n# 둘째 장"), text);
 });
 
 test("a quote is a callout: the tint behind it, the bar beside it", () => {
@@ -264,8 +265,8 @@ test(":::comparison becomes a two-column table with the columns as its header", 
   const text = docxToText(
     build(":::comparison\n### IRSA\n\n- 표준 방식\n\n### Pod Identity\n\n- 신규 권장\n:::"),
   ).text;
-  assert.ok(text.includes("IRSA | Pod Identity"), text);
-  assert.ok(text.includes("표준 방식 | 신규 권장"), text);
+  assert.ok(text.includes("| **IRSA** | **Pod Identity** |"), text);
+  assert.ok(text.includes("| 표준 방식 | 신규 권장 |"), text);
 });
 
 test("an asset image standing alone becomes a centred figure with its caption", () => {
@@ -313,7 +314,7 @@ test("a report with a cover and enough structure gets a contents page, complete 
   assert.ok(body.includes('<w:fldChar w:fldCharType="separate"/>'), "the result is cached");
   assert.equal(partOf(bytes, "word/settings.xml").includes("updateFields"), false);
   const text = docxToText(bytes).text;
-  assert.ok(text.includes("목차\n첫 장\n절\n둘째 장"), text);
+  assert.ok(text.includes("**목차**\n\n첫 장\n\n절\n\n둘째 장"), text);
 });
 
 test("the contents label follows the cover's language", () => {

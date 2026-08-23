@@ -1,6 +1,6 @@
 /**
- * OpenDocument — text, spreadsheet and presentation — to the text a model
- * should read.
+ * OpenDocument — text, spreadsheet and presentation — to what a model should
+ * read.
  *
  * One reader for all three, which is not a shortcut: ODF puts the body of every
  * kind in a single `content.xml` and marks structure with the same handful of
@@ -9,15 +9,24 @@
  * table alike. Three readers would be the same reader three times, and the
  * places they would drift apart are exactly the shared elements.
  *
- * What differs by kind is only what a heading means — a sheet name, a slide
- * number, nothing — so that is the only thing this branches on.
+ * What differs by kind is only what a boundary means — a sheet, a slide,
+ * nothing — so that is the only thing this branches on.
+ *
+ * **Structure costs no second part here.** `office:automatic-styles` sits ahead
+ * of `office:body` in the same file, so one forward pass collects the list and
+ * character styles the body then names, and a heading states its own level on
+ * the element that opens it. That is why this reader recovers the most for the
+ * least.
  */
 
-import { walkXml, type XmlHandler } from "../xml.js";
+import { MAX_REPEATED_COLUMNS, MAX_TEXT_CHARS } from "../limits.js";
+import type { Align, Run } from "../markdown.js";
+import { attributeOf, localName, walkXml, type XmlHandler } from "../xml.js";
 import { openZip } from "../zip.js";
-import { MAX_REPEATED_COLUMNS } from "../limits.js";
-import { normalize } from "./lines.js";
 import { DocumentError } from "../errors.js";
+import type { ReadBlock, ReadCell, ReadRow } from "./blocks.js";
+import { collapseRuns } from "./lines.js";
+import { blocksToMarkdown } from "./serialize.js";
 
 export class OdfError extends DocumentError {}
 
@@ -26,21 +35,12 @@ const MIMETYPE = "mimetype";
 
 export type OdfKind = "text" | "spreadsheet" | "presentation";
 
-export interface OdfText {
-  text: string;
+export interface OdfBlocks {
+  blocks: ReadBlock[];
   kind: OdfKind;
   /** Sheets or slides that contributed; absent for a text document. */
   parts?: number;
-}
-
-function localName(name: string): string {
-  const colon = name.indexOf(":");
-  return colon === -1 ? name : name.slice(colon + 1);
-}
-
-function attribute(attributes: string, name: string): string | undefined {
-  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*"([^"]*)"`).exec(attributes);
-  return match?.[1];
+  observed: string[];
 }
 
 /** What the package says it is. The `mimetype` entry is required to be first. */
@@ -69,56 +69,182 @@ export function odfKindOf(mimetype: string): OdfKind | undefined {
  * a footnote's own `</text:p>` flushed and cut its host paragraph in half, and
  * an ODP's speaker notes arrived as slide content while `document.ts` promised
  * they would not.
- *
- * Matched on the local name, like everything else here: `text:tracked-changes`,
- * `office:annotation`, `office:annotation-end`, `text:note`,
- * `presentation:notes`.
  */
 const SKIPPED = new Set(["tracked-changes", "annotation", "annotation-end", "note", "notes"]);
 
 /** A cell's `table:number-columns-repeated`, bounded and never zero. */
 function repeatOf(attributes: string): number {
-  const count = Number(attribute(attributes, "table:number-columns-repeated") ?? "1");
+  const count = Number(attributeOf(attributes, "table:number-columns-repeated") ?? "1");
   if (!Number.isInteger(count) || count < 1) {
     return 1;
   }
   return Math.min(count, MAX_REPEATED_COLUMNS);
 }
 
+function spanOf(attributes: string, name: string): number {
+  const count = Number(attributeOf(attributes, name) ?? "1");
+  return Number.isInteger(count) && count > 1 ? Math.min(count, MAX_REPEATED_COLUMNS) : 1;
+}
+
+/** A table being built, one per open `table:table` so a nested one nests. */
+interface Building {
+  rows: ReadRow[];
+  cells: ReadCell[];
+  columns: number;
+  merged: boolean;
+  /** Empty columns a repeat run owes, paid when a later cell needs them. */
+  owed: number;
+  /** Depth inside `table:table-header-rows`, which the document marked itself. */
+  headerDepth: number;
+}
+
+type Emphasis = { bold?: boolean; italic?: boolean };
+
 class Extractor implements XmlHandler {
-  private readonly lines: string[] = [];
-  private buffer = "";
-  private cellDepth = 0;
-  /** Open `text:p` / `text:h` elements. Text outside one is not prose. */
+  private readonly blocks: ReadBlock[] = [];
+  private runs: Run[] = [];
+  private pending = "";
+  private emphasis: Emphasis = {};
+  private href: string | undefined;
+  /** `style:name` → what a `text:span` wearing it looks like. */
+  private readonly textStyles = new Map<string, Emphasis>();
+  /** A list style's name → whether each of its levels is numbered. */
+  private readonly listStyles = new Map<string, boolean[]>();
+  private defining: { name: string; family: string } | undefined;
+  private definingList: string | undefined;
+  private readonly spans: Emphasis[] = [];
+  private readonly lists: Array<string | undefined> = [];
+  private readonly tables: Building[] = [];
+  private cellSpan: { across: number; down: number; repeat: number } | undefined;
   private paraDepth = 0;
-  /** Open `SKIPPED` subtrees. Counters keep counting inside one; effects stop. */
   private skipDepth = 0;
-  /** Where the outermost open cell's content starts in `buffer`. */
-  private cellStart = 0;
-  /** How many columns that cell stands for. */
-  private cellRepeat = 1;
-  /**
-   * Columns a repeat run owes, held until a later cell in the row needs them.
-   *
-   * Materialising eagerly would draw the sheet's full width for every row, so
-   * the run is paid for only when something has to sit to the right of it —
-   * which is exactly when its width starts to matter.
-   */
-  private owed = 0;
-  /** Sheets or slides seen, for the note. */
+  private cellDepth = 0;
+  private headingLevel: number | undefined;
+  private frameLabel: string | undefined;
+  readonly observed = new Set<string>();
   parts = 0;
 
   constructor(private readonly kind: OdfKind) {}
 
-  /** Prose is what a paragraph holds, outside a subtree we are skipping. */
   private get capturing(): boolean {
     return this.paraDepth > 0 && this.skipDepth === 0;
   }
 
+  private get table(): Building | undefined {
+    return this.tables[this.tables.length - 1];
+  }
+
   text(value: string): void {
     if (this.capturing) {
-      this.buffer += value;
+      this.pending += value;
     }
+  }
+
+  /** Close the run being accumulated, so a style change starts a new one. */
+  private cut(): void {
+    if (this.pending !== "") {
+      this.runs.push({
+        text: this.pending,
+        ...this.emphasis,
+        ...(this.href ? { href: this.href } : {}),
+      });
+      this.pending = "";
+    }
+  }
+
+  /** Finish the open paragraph as whatever its context makes it. */
+  private endParagraph(): void {
+    this.cut();
+    const runs = collapseRuns(this.runs);
+    this.runs = [];
+    const level = this.headingLevel;
+    this.headingLevel = undefined;
+    if (runs.length === 0) {
+      return;
+    }
+    const depth = this.lists.length;
+    if (depth > 0) {
+      const ordered = this.orderedHere();
+      const last = this.blocks[this.blocks.length - 1];
+      const item = { runs, depth: Math.min(depth - 1, 4) };
+      if (last?.kind === "list" && last.ordered === ordered) {
+        last.items.push(item);
+        return;
+      }
+      this.blocks.push({ kind: "list", ordered, items: [item] });
+      return;
+    }
+    if (level !== undefined) {
+      const clamped = Math.min(Math.max(level, 1), 6) as 1 | 2 | 3 | 4 | 5 | 6;
+      this.blocks.push({ kind: "heading", level: clamped, runs });
+      return;
+    }
+    this.blocks.push({ kind: "paragraph", runs });
+  }
+
+  /**
+   * Whether the innermost open list is numbered.
+   *
+   * A nested `text:list` very often omits `@text:style-name` and inherits the
+   * one outside it, so "no style named" is not "a bullet" — the stack is walked
+   * outwards until a list says what it is.
+   */
+  private orderedHere(): boolean {
+    for (let index = this.lists.length - 1; index >= 0; index -= 1) {
+      const name = this.lists[index];
+      const levels = name === undefined ? undefined : this.listStyles.get(name);
+      if (levels && levels.length > 0) {
+        return levels[this.lists.length - 1] ?? levels[levels.length - 1] ?? false;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * `office:automatic-styles`, which is the whole of the style story here.
+   *
+   * It precedes `office:body` in the same part, so collecting on the way past
+   * costs one pass and no second read.
+   */
+  private declaration(local: string, attributes: string, selfClosing: boolean): boolean {
+    if (local === "style") {
+      if (!selfClosing) {
+        this.defining = {
+          name: attributeOf(attributes, "style:name") ?? "",
+          family: attributeOf(attributes, "style:family") ?? "",
+        };
+      }
+      return true;
+    }
+    if (local === "text-properties" && this.defining?.family === "text") {
+      const weight = attributeOf(attributes, "fo:font-weight");
+      const posture = attributeOf(attributes, "fo:font-style");
+      const style: Emphasis = {};
+      if (weight !== undefined && weight !== "normal") {
+        style.bold = true;
+      }
+      if (posture !== undefined && posture !== "normal") {
+        style.italic = true;
+      }
+      this.textStyles.set(this.defining.name, style);
+      return true;
+    }
+    if (local === "list-style") {
+      if (!selfClosing) {
+        this.definingList = attributeOf(attributes, "style:name") ?? "";
+        this.listStyles.set(this.definingList, []);
+      }
+      return true;
+    }
+    if (this.definingList !== undefined && local.startsWith("list-level-style-")) {
+      const levels = this.listStyles.get(this.definingList);
+      const level = Number(attributeOf(attributes, "text:level") ?? "1");
+      if (levels && Number.isInteger(level) && level > 0) {
+        levels[level - 1] = local === "list-level-style-number";
+      }
+      return true;
+    }
+    return false;
   }
 
   open(name: string, attributes: string, selfClosing: boolean): void {
@@ -129,21 +255,58 @@ class Extractor implements XmlHandler {
       }
       return;
     }
+    if (this.declaration(local, attributes, selfClosing)) {
+      return;
+    }
     switch (local) {
-      case "p":
       case "h":
+      case "p": {
+        if (selfClosing) {
+          return;
+        }
+        this.paraDepth += 1;
+        if (local === "h" && this.headingLevel === undefined && this.skipDepth === 0) {
+          const declared = Number(
+            attributeOf(attributes, "text:outline-level") ??
+              attributeOf(attributes, "text:level") ??
+              "1",
+          );
+          this.headingLevel = Number.isInteger(declared) && declared > 0 ? declared : 1;
+        }
+        return;
+      }
+      case "span": {
+        if (selfClosing) {
+          return;
+        }
+        this.cut();
+        this.spans.push(this.emphasis);
+        const style = attributeOf(attributes, "text:style-name");
+        const found = style === undefined ? undefined : this.textStyles.get(style);
+        this.emphasis = { ...this.emphasis, ...(found ?? {}) };
+        return;
+      }
+      case "a": {
+        const href = attributeOf(attributes, "xlink:href");
+        if (!selfClosing && href !== undefined && href !== "") {
+          this.cut();
+          this.href = href;
+        }
+        return;
+      }
+      case "list":
         if (!selfClosing) {
-          this.paraDepth += 1;
+          this.lists.push(attributeOf(attributes, "text:style-name"));
         }
         return;
       case "tab":
         if (this.capturing) {
-          this.buffer += "\t";
+          this.pending += "\t";
         }
         return;
       case "line-break":
         if (this.capturing) {
-          this.buffer += "\n";
+          this.pending += " ";
         }
         return;
       // `<text:s text:c="4"/>` is a run of spaces the format encodes rather
@@ -152,46 +315,89 @@ class Extractor implements XmlHandler {
         if (!this.capturing) {
           return;
         }
-        const count = Number(attribute(attributes, "text:c") ?? "1");
-        this.buffer += " ".repeat(Number.isInteger(count) && count > 0 ? Math.min(count, 80) : 1);
+        const count = Number(attributeOf(attributes, "text:c") ?? "1");
+        this.pending += " ".repeat(Number.isInteger(count) && count > 0 ? Math.min(count, 80) : 1);
+        return;
+      }
+      case "frame":
+        this.frameLabel = attributeOf(attributes, "draw:name");
+        return;
+      case "image": {
+        if (this.skipDepth > 0) {
+          return;
+        }
+        const target = attributeOf(attributes, "xlink:href");
+        this.endParagraph();
+        this.blocks.push({
+          kind: "image",
+          alt: this.frameLabel !== undefined && this.frameLabel !== "" ? this.frameLabel : "image",
+          ...(target ? { target } : {}),
+        });
         return;
       }
       case "table": {
-        if (this.kind !== "spreadsheet" || this.skipDepth > 0) {
+        if (this.skipDepth > 0) {
           return;
         }
-        this.parts += 1;
-        const sheet = attribute(attributes, "table:name");
-        this.flush();
-        this.lines.push(sheet ? `## ${sheet}` : `## Sheet ${this.parts}`);
+        if (this.kind === "spreadsheet" && this.tables.length === 0) {
+          this.endParagraph();
+          this.parts += 1;
+          const named = attributeOf(attributes, "table:name");
+          this.blocks.push({
+            kind: "break",
+            unit: "sheet",
+            index: this.parts,
+            ...(named ? { name: named } : {}),
+          });
+        }
+        this.tables.push({ rows: [], cells: [], columns: 0, merged: false, owed: 0, headerDepth: 0 });
         return;
       }
-      case "page":
+      case "table-header-rows":
+        if (this.table) {
+          this.table.headerDepth += 1;
+        }
+        return;
+      case "page": {
         if (this.kind !== "presentation" || this.skipDepth > 0) {
           return;
         }
+        this.endParagraph();
         this.parts += 1;
-        this.flush();
-        this.lines.push(`## Slide ${this.parts}`);
+        const named = attributeOf(attributes, "draw:name");
+        this.blocks.push({
+          kind: "break",
+          unit: "slide",
+          index: this.parts,
+          ...(named ? { name: named } : {}),
+        });
         return;
-      // A covered cell is one a merge swallowed. It holds no text and it holds
-      // its column, so it separates like any other — without it, every value
-      // to the right of a merge moves left by the width of the merge.
-      case "table-cell":
-      case "covered-table-cell": {
-        if (this.skipDepth > 0) {
+      }
+      // A covered cell is the grid position a span already claimed — from the
+      // colspan beside it, or from a rowspan in the row above. The serializer
+      // lays spans out on a grid and reserves those positions from the span
+      // itself, so counting the covered cell again would add a column the
+      // table does not have. In the flat text this reader used to produce
+      // there was no span to reserve it, which is why it had to separate.
+      case "covered-table-cell":
+        return;
+      case "table-cell": {
+        const table = this.table;
+        if (!table || this.skipDepth > 0) {
           return;
         }
         const repeat = repeatOf(attributes);
         if (selfClosing) {
-          // An empty cell: nothing to place, only columns to owe.
-          this.owed += repeat;
+          table.owed += repeat;
           return;
         }
         if (this.cellDepth === 0) {
-          this.settle();
-          this.cellStart = this.buffer.length;
-          this.cellRepeat = repeat;
+          this.settle(table);
+          this.cellSpan = {
+            across: spanOf(attributes, "table:number-columns-spanned"),
+            down: spanOf(attributes, "table:number-rows-spanned"),
+            repeat,
+          };
         }
         this.cellDepth += 1;
         return;
@@ -210,70 +416,152 @@ class Extractor implements XmlHandler {
       return;
     }
     switch (local) {
-      case "p":
+      case "style":
+        this.defining = undefined;
+        return;
+      case "list-style":
+        this.definingList = undefined;
+        return;
       case "h":
+      case "p":
         if (this.paraDepth > 0) {
           this.paraDepth -= 1;
         }
+        if (this.skipDepth > 0) {
+          return;
+        }
         // Inside a cell a paragraph is a line *within* the cell, not the end of
-        // the row — flushing here would put every cell on its own line. Inside
-        // a skipped subtree it is not this document's paragraph at all.
-        if (this.cellDepth === 0 && this.skipDepth === 0) {
-          this.flush();
+        // anything — ending here would put every cell on its own row.
+        if (this.cellDepth > 0) {
+          this.pending += " ";
+          return;
+        }
+        this.endParagraph();
+        return;
+      case "span":
+        this.cut();
+        this.emphasis = this.spans.pop() ?? {};
+        return;
+      case "a":
+        this.cut();
+        this.href = undefined;
+        return;
+      case "list":
+        this.lists.pop();
+        return;
+      case "frame":
+        this.frameLabel = undefined;
+        return;
+      case "table-header-rows":
+        if (this.table && this.table.headerDepth > 0) {
+          this.table.headerDepth -= 1;
         }
         return;
-      case "table-cell":
-      case "covered-table-cell": {
-        if (this.skipDepth > 0) {
+      case "covered-table-cell":
+        return;
+      case "table-cell": {
+        const table = this.table;
+        if (!table || this.skipDepth > 0) {
           return;
         }
         if (this.cellDepth > 0) {
           this.cellDepth -= 1;
         }
-        const content = this.cellDepth === 0 ? this.buffer.slice(this.cellStart) : "";
-        this.buffer += " | ";
-        // A repeated cell with content stands for that value in each of its
-        // columns; the separator is what carries the empty ones.
-        for (let repeat = 1; repeat < this.cellRepeat; repeat += 1) {
-          this.buffer += `${content} | `;
+        if (this.cellDepth > 0) {
+          return;
         }
-        this.cellRepeat = 1;
+        this.cut();
+        const runs = collapseRuns(this.runs);
+        this.runs = [];
+        const span = this.cellSpan ?? { across: 1, down: 1, repeat: 1 };
+        this.cellSpan = undefined;
+        if (span.across > 1 || span.down > 1) {
+          table.merged = true;
+          this.observed.add("merged table cells");
+        }
+        for (let copy = 0; copy < span.repeat; copy += 1) {
+          table.cells.push({
+            runs: copy === 0 ? runs : runs.map((run) => ({ ...run })),
+            ...(span.across > 1 ? { colspan: span.across } : {}),
+            ...(span.down > 1 ? { rowspan: span.down } : {}),
+          });
+        }
         return;
       }
-      case "table-row":
-        if (this.skipDepth > 0) {
+      case "table-row": {
+        const table = this.table;
+        if (!table || this.skipDepth > 0) {
           return;
         }
         // Columns owed at the end of a row are the padding every ODS row
         // carries. Nothing sits to their right, so nobody is waiting on them.
-        this.owed = 0;
-        this.flush();
+        table.owed = 0;
+        const width = table.cells.reduce((total, cell) => total + (cell.colspan ?? 1), 0);
+        table.columns = Math.max(table.columns, width);
+        table.rows.push({
+          cells: table.cells,
+          ...(table.headerDepth > 0 ? { header: true } : {}),
+        });
+        table.cells = [];
+        return;
+      }
+      case "table":
+        this.finishTable();
         return;
       default:
         return;
     }
   }
 
-  /** Pay for the repeat run standing between the last cell and this one. */
-  private settle(): void {
-    if (this.owed > 0) {
-      this.buffer += " | ".repeat(this.owed);
-      this.owed = 0;
+  private finishTable(): void {
+    const table = this.tables.pop();
+    if (!table || table.rows.length === 0 || table.columns === 0) {
+      return;
     }
+    if (this.tables.length > 0) {
+      this.observed.add("a table nested inside a cell");
+    }
+    this.blocks.push({
+      kind: "table",
+      rows: table.rows,
+      columns: table.columns,
+      align: Array.from({ length: table.columns }, () => "left" as Align),
+      totalRows: table.rows.length,
+      merged: table.merged,
+    });
   }
 
-  private flush(): void {
-    this.lines.push(this.buffer);
-    this.buffer = "";
+  /** Pay for the repeat run standing between the last cell and this one. */
+  private settle(table: Building): void {
+    for (let column = 0; column < table.owed; column += 1) {
+      table.cells.push({ runs: [] });
+    }
+    table.owed = 0;
   }
 
-  done(): string[] {
-    this.flush();
-    return this.lines;
+  done(): ReadBlock[] {
+    this.endParagraph();
+    while (this.tables.length > 0) {
+      this.finishTable();
+    }
+    return this.blocks;
   }
 }
 
-export function odfToText(bytes: Uint8Array): OdfText {
+/** The body's XML, separated so the walk can be tested without a zip. */
+export function contentXmlToBlocks(xml: string, kind: OdfKind): OdfBlocks {
+  const extractor = new Extractor(kind);
+  walkXml(xml, extractor);
+  const blocks = extractor.done();
+  return {
+    blocks,
+    kind,
+    ...(extractor.parts > 0 ? { parts: extractor.parts } : {}),
+    observed: [...extractor.observed],
+  };
+}
+
+export function odfToBlocks(bytes: Uint8Array): OdfBlocks {
   const { entries, read } = openZip(bytes);
   const names = entries.map((entry) => entry.name);
   if (!names.includes(CONTENT)) {
@@ -290,11 +578,25 @@ export function odfToText(bytes: Uint8Array): OdfText {
   if (!content) {
     throw new OdfError("its content part could not be read");
   }
-  const extractor = new Extractor(kind);
-  walkXml(decoder.decode(content), extractor);
-  const text = normalize(extractor.done());
+  const result = contentXmlToBlocks(decoder.decode(content), kind);
+  if (result.blocks.length === 0) {
+    throw new OdfError("it has no readable text");
+  }
+  return result;
+}
+
+export interface OdfText {
+  text: string;
+  kind: OdfKind;
+  parts?: number;
+}
+
+/** The same read, written out — what `document.ts` asks for. */
+export function odfToText(bytes: Uint8Array): OdfText {
+  const read = odfToBlocks(bytes);
+  const { text } = blocksToMarkdown(read.blocks, MAX_TEXT_CHARS);
   if (text === "") {
     throw new OdfError("it has no readable text");
   }
-  return { text, kind, ...(extractor.parts > 0 ? { parts: extractor.parts } : {}) };
+  return { text, kind: read.kind, ...(read.parts === undefined ? {} : { parts: read.parts }) };
 }

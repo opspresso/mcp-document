@@ -32,10 +32,17 @@ That states the fact where a model is most likely to weigh it. It is a
 mitigation, not a fix. Treat anything this tool returns as attacker-controlled.
 
 **The limits**: 16MB request body, 12MB of decoded source bytes, 90,000
-characters of extracted text, 500,000 characters of Markdown in,
-12 assets totalling 6MB decoded, and `MAX_RENDERED_BYTES` on the way out —
-refused here with a sentence rather than cut by the caller's transport, where it
-would arrive as a parse failure.
+characters of extracted text, 500 blocks and 120 preview characters per
+`inspect_document` call, 256 columns for one ODF repeat run, 500,000 characters
+of Markdown in, 12 assets totalling 6MB decoded, and `MAX_RENDERED_BYTES` on the
+way out — refused here with a sentence rather than cut by the caller's
+transport, where it would arrive as a parse failure.
+
+**Reading a document's structure widens what it can say to the model.** Alt
+text, style names and hyperlink targets are the document's own strings and are
+now returned, so a `target=https://…` on an inspection line is an address
+somebody else chose. Nothing here follows one — this server opens no sockets at
+all — and every one of them arrives inside the provenance header above.
 
 **Spreadsheet active content is never activated.** Formula text and cached
 values are parsed without recalculation; external workbook links are counted

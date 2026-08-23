@@ -1,5 +1,5 @@
 /**
- * One document in, one piece of text out.
+ * One document in, one reading out.
  *
  * The dispatch is here rather than in `tools.ts` so that the note each format
  * produces is written next to the reader that knows what it means. "All 12
@@ -7,26 +7,36 @@
  * question — did this reach the end of the document — in the only units their
  * format has.
  *
- * Every path returns text or raises. None of them returns an empty success: an
- * empty string reads as "the document is empty", which is a different and much
- * more damaging claim than "I could not read it".
+ * Every path returns something or raises. None of them returns an empty
+ * success: an empty string reads as "the document is empty", which is a
+ * different and much more damaging claim than "I could not read it".
  *
- * Office formats that need a parser. PDF and plain text left with the
- * URL side: they need no parser Agent Studio lacks, so routing one here was a
- * network round trip to reach the same `unpdf` — and a third copy of the
- * extraction to keep in step.
+ * **The cut is the serializer's, not this file's.** `truncateText` slices a
+ * finished string, and against GFM that is unsafe — a table cut between its
+ * header and its divider is not a table any more. `blocksToMarkdown` spends
+ * the budget on block boundaries and, inside a table, on row boundaries;
+ * `fit()` stays for the one reader that budgets in its own units.
+ *
+ * **`omissions` is static plus observed.** The per-format list says what this
+ * reader never looks at; `observed` says what *this document* actually lost —
+ * a merged cell, a picture inside a table, a deck reordered after its slides
+ * were named. The first is a property of the code and the second of the file,
+ * and running them together is what lets a caller tell "never supported" from
+ * "was here and could not be carried".
  */
 
 import { detect, type Format } from "../detect.js";
 import { MAX_TEXT_CHARS, truncateText } from "../limits.js";
 import type { DocumentSource } from "../source.js";
 import { DocumentError } from "../errors.js";
-import { docxToText } from "./docx.js";
+import type { ReadBlock } from "./blocks.js";
+import { docxToBlocks } from "./docx.js";
 import { hwpToText } from "./hwp5.js";
-import { hwpxToText } from "./hwpx.js";
-import { odfToText } from "./odf.js";
-import { pptxToText } from "./pptx.js";
-import { rtfToText } from "./rtf.js";
+import { hwpxToBlocks } from "./hwpx.js";
+import { odfToBlocks } from "./odf.js";
+import { pptxToBlocks } from "./pptx.js";
+import { rtfToBlocks } from "./rtf.js";
+import { blocksToMarkdown } from "./serialize.js";
 import { xlsxToText } from "./xlsx.js";
 
 export class UnsupportedDocument extends DocumentError {}
@@ -41,8 +51,17 @@ export interface ReadResult {
   complete: boolean;
   /** Parts deliberately left out of the text representation. */
   omissions: string[];
+  /** Counts in the format's own units, plus `blocks` for every format. */
+  counts?: Record<string, number>;
+}
+
+/** The same read, before it is written — what `inspect_document` describes. */
+export interface ReadBlocks {
+  blocks: ReadBlock[];
+  format: Format;
   /** Counts in the format's own units. */
   counts?: Record<string, number>;
+  omissions: string[];
 }
 
 /**
@@ -61,6 +80,30 @@ function fit(text: string, whole?: string): { text: string; note?: string; compl
   return whole ? { text: cut.text, note: whole, complete: true } : { text: cut.text, complete: true };
 }
 
+/**
+ * A block reading's note and completeness, in one place.
+ *
+ * `blocks` counts what was written and `totalBlocks` what the document held,
+ * and the two differ exactly when the budget ran out — the same shape the
+ * spreadsheet reader has used for rows since it was written.
+ */
+function wrote(
+  blocks: readonly ReadBlock[],
+  whole: string,
+  units?: string,
+): { text: string; note: string; complete: boolean; counts: Record<string, number> } {
+  const written = blocksToMarkdown(blocks, MAX_TEXT_CHARS);
+  const note = written.complete
+    ? whole
+    : `${written.blocks} of ${blocks.length} block(s)${units ? ` across ${units}` : ""}`;
+  return {
+    text: written.text,
+    note,
+    complete: written.complete,
+    counts: { blocks: written.blocks, totalBlocks: blocks.length },
+  };
+}
+
 export async function readDocument(source: DocumentSource): Promise<ReadResult> {
   const detection = detect(source.bytes, source.mimeType, source.filename);
   if (detection.format === "unsupported") {
@@ -69,28 +112,39 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
   const format = detection.format;
 
   if (format === "docx") {
-    const { text } = docxToText(source.bytes);
+    const { blocks, observed } = docxToBlocks(source.bytes);
     return {
       format,
-      ...fit(text, "the document body, without headers, footers or footnotes"),
-      omissions: ["headers", "footers", "footnotes", "comments", "tracked deletions", "formatting"],
+      ...wrote(blocks, "the document body, without headers, footers or footnotes"),
+      omissions: [
+        "headers",
+        "footers",
+        "footnotes",
+        "comments",
+        "tracked deletions",
+        "field hyperlinks",
+        ...observed,
+      ],
     };
   }
 
   if (format === "hwpx") {
-    const { text, sections } = hwpxToText(source.bytes);
+    const { blocks, sections, observed } = hwpxToBlocks(source.bytes);
+    const written = wrote(blocks, `all ${sections} section(s)`, `${sections} section(s)`);
     return {
       format,
-      ...fit(text, `all ${sections} section(s)`),
-      omissions: ["formatting"],
-      counts: { sections },
+      ...written,
+      omissions: ["field hyperlinks", ...observed],
+      counts: { ...written.counts, sections },
     };
   }
 
   if (format === "xlsx") {
-    // The only reader besides the old PDF one that budgets for itself: a sheet
-    // can dwarf any text budget, and cutting mid-row would leave a line whose
-    // columns no longer line up with its neighbours'.
+    // The only reader that budgets for itself: a sheet can dwarf any text
+    // budget, and cutting mid-row would leave a line whose columns no longer
+    // line up with its neighbours'. A worksheet is also the one grid with no
+    // header row the file commits to, so it stays rows of text rather than
+    // becoming a table that asserts one.
     const { text, sheets, totalSheets, hiddenSheets, rows, totalRows } = xlsxToText(
       source.bytes,
       MAX_TEXT_CHARS,
@@ -103,6 +157,7 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
       omissions: [
         "formulas",
         "cell formatting",
+        "number formats other than dates",
         "comments",
         "macros",
         ...(hiddenSheets > 0 ? ["hidden sheets"] : []),
@@ -115,58 +170,127 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
   }
 
   if (format === "pptx") {
-    const { text, slides } = pptxToText(source.bytes);
+    const { blocks, slides, observed } = pptxToBlocks(source.bytes);
+    const written = wrote(
+      blocks,
+      `all ${slides} slide(s), without speaker notes`,
+      `${slides} slide(s)`,
+    );
     return {
       format,
-      ...fit(text, `all ${slides} slide(s), without speaker notes`),
-      omissions: ["speaker notes", "comments", "animations", "formatting"],
-      counts: { slides },
+      ...written,
+      omissions: ["speaker notes", "comments", "animations", "shape order", ...observed],
+      counts: { ...written.counts, slides },
     };
   }
 
   if (format === "odf") {
-    const { text, kind, parts } = odfToText(source.bytes);
+    const { blocks, kind, parts, observed } = odfToBlocks(source.bytes);
     const unit = kind === "spreadsheet" ? "sheet" : "slide";
+    const written = wrote(
+      blocks,
+      parts === undefined
+        ? "the document body, without headers or footers"
+        : kind === "presentation"
+          ? `all ${parts} slide(s), without speaker notes`
+          : `all ${parts} sheet(s)`,
+      parts === undefined ? undefined : `${parts} ${unit}(s)`,
+    );
     return {
       format,
-      ...fit(
-        text,
-        parts === undefined
-          ? "the document body, without headers or footers"
-          : kind === "presentation"
-            ? `all ${parts} slide(s), without speaker notes`
-            : `all ${parts} sheet(s)`,
-      ),
-      // The last four were never a decision until now: the reader had no text
-      // gate, so it returned tracked deletions, comment bodies, footnotes and
-      // an ODP's speaker notes as body text while this list said otherwise.
+      ...written,
+      // The last four were never a decision until the text gate: the reader
+      // returned tracked deletions, comment bodies, footnotes and an ODP's
+      // speaker notes as body text while this list said otherwise.
       omissions: [
-        "formatting",
         "headers",
         "footers",
         "footnotes",
         "comments",
         "tracked deletions",
         ...(kind === "presentation" ? ["speaker notes"] : []),
+        ...observed,
       ],
-      ...(parts === undefined ? {} : { counts: { [unit === "sheet" ? "sheets" : "slides"]: parts } }),
+      counts:
+        parts === undefined
+          ? written.counts
+          : { ...written.counts, [unit === "sheet" ? "sheets" : "slides"]: parts },
     };
   }
 
   if (format === "rtf") {
-    const { text } = rtfToText(source.bytes);
+    const { blocks, observed } = rtfToBlocks(source.bytes);
     return {
       format,
-      ...fit(text, "the document body, without headers or footers"),
-      omissions: ["headers", "footers", "formatting"],
+      ...wrote(blocks, "the document body, without headers or footers"),
+      omissions: [
+        "headers",
+        "footers",
+        "footnotes",
+        "list numbering definitions",
+        "field hyperlinks",
+        ...observed,
+      ],
     };
   }
 
-  const { text, sections, version } = hwpToText(source.bytes);
+  const { text, sections, version, blocks, observed } = hwpToText(source.bytes);
   return {
     format,
     ...fit(text, `all ${sections} section(s) of an HWP ${version} document`),
-    omissions: ["formatting"],
-    counts: { sections },
+    // The record layouts that would give a level or a cell are unverified
+    // against the HWP 5.0 spec, and a wrong field offset resolves to a real
+    // shape and answers confidently with the wrong one.
+    omissions: ["heading levels", "list markers", "table structure", ...observed],
+    counts: { sections, blocks: blocks.length, totalBlocks: blocks.length },
   };
+}
+
+/**
+ * The same read, stopped before it is written.
+ *
+ * `inspect_document` describes blocks rather than writing them, so it needs the
+ * tree the serializer would have consumed. XLSX has no entry here on purpose:
+ * a workbook's structure is `inspect_spreadsheet`'s question, and two tools
+ * answering it differently is worse than one refusal that costs a sentence.
+ */
+export async function readBlocks(source: DocumentSource): Promise<ReadBlocks> {
+  const detection = detect(source.bytes, source.mimeType, source.filename);
+  if (detection.format === "unsupported") {
+    throw new UnsupportedDocument(detection.reason);
+  }
+  const format = detection.format;
+  if (format === "xlsx") {
+    throw new UnsupportedDocument(
+      "a workbook's structure is inspect_spreadsheet's question — it returns addressed cells, " +
+        "formulas and sheet state, which is what a spreadsheet has instead of blocks",
+    );
+  }
+  if (format === "docx") {
+    const { blocks, paragraphs, observed } = docxToBlocks(source.bytes);
+    return { blocks, format, counts: { paragraphs }, omissions: observed };
+  }
+  if (format === "hwpx") {
+    const { blocks, sections, observed } = hwpxToBlocks(source.bytes);
+    return { blocks, format, counts: { sections }, omissions: observed };
+  }
+  if (format === "pptx") {
+    const { blocks, slides, observed } = pptxToBlocks(source.bytes);
+    return { blocks, format, counts: { slides }, omissions: observed };
+  }
+  if (format === "odf") {
+    const { blocks, parts, observed } = odfToBlocks(source.bytes);
+    return {
+      blocks,
+      format,
+      ...(parts === undefined ? {} : { counts: { parts } }),
+      omissions: observed,
+    };
+  }
+  if (format === "rtf") {
+    const { blocks, observed } = rtfToBlocks(source.bytes);
+    return { blocks, format, omissions: observed };
+  }
+  const { blocks, sections, observed } = hwpToText(source.bytes);
+  return { blocks, format, counts: { sections }, omissions: observed };
 }
