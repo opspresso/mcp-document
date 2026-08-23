@@ -465,6 +465,13 @@ async function inspectDocument(args: Record<string, unknown>): Promise<ToolResul
   if (to !== undefined && typeof to !== "number") {
     return to;
   }
+  if (typeof from === "number" && typeof to === "number" && to < from) {
+    return failed("Error: `to` must not come before `from`.", {
+      operation: "inspect_document",
+      field: "to",
+      code: "INVALID_ARGUMENT",
+    });
+  }
   try {
     const source = loadSource({ content, filename });
     const reading = await readBlocks(source);
@@ -474,7 +481,9 @@ async function inspectDocument(args: Record<string, unknown>): Promise<ToolResul
     });
     const note = described.complete
       ? `all ${described.totalBlocks} block(s)`
-      : `block ${described.from} to ${described.to} of ${described.totalBlocks}`;
+      : described.to < described.from
+        ? `no block of ${described.totalBlocks} — block ${described.from} is longer than one call can describe`
+        : `block ${described.from} to ${described.to} of ${described.totalBlocks}`;
     return ok(asUntrustedContent(source.label, described.text, note), {
       operation: "inspect_document",
       sourceFormat: reading.format,

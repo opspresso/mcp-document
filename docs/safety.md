@@ -38,6 +38,13 @@ of Markdown in, 12 assets totalling 6MB decoded, and `MAX_RENDERED_BYTES` on the
 way out — refused here with a sentence rather than cut by the caller's
 transport, where it would arrive as a parse failure.
 
+**A bracket is not a link until something says it is.** `MAX_MARKDOWN_CHARS`
+was set against what a renderer holds in memory, and the parser was the real
+cost: half a million `[` with no `](` after them backtracked once per bracket
+and held a single-threaded server for minutes. A link and an image both need a
+closing `](`, and looking for one first is what makes the cost of *not* being a
+link a single scan.
+
 **Reading a document's structure widens what it can say to the model.** Alt
 text, style names and hyperlink targets are the document's own strings and are
 now returned, so a `target=https://…` on an inspection line is an address

@@ -238,8 +238,14 @@ class Extractor implements XmlHandler {
           this.textDepth += 1;
         }
         return;
-      // A soft break inside a run, which is a line the author put there.
+      // A soft break inside a run, which is a line the author put there —
+      // except inside a cell, where ending the block would push what came
+      // before it out of the table as a paragraph of its own.
       case "br":
+        if (this.cellDepth > 0) {
+          this.pending += " ";
+          return;
+        }
         this.endParagraph();
         return;
       case "fld":
@@ -294,6 +300,12 @@ class Extractor implements XmlHandler {
       case "r":
         this.cut();
         this.emphasis = {};
+        // A link belongs to the run that declared it. `a:hlinkClick` is
+        // self-closing in every deck this repository has seen — its own writer
+        // emits `<a:hlinkClick r:id="…"/>` — and `walkXml` gives a self-closing
+        // tag no `close`, so clearing there alone left the href set for the
+        // rest of the slide: every paragraph after a link became that link.
+        this.href = undefined;
         return;
       case "hlinkClick": {
         const id = attributeOf(attributes, "r:id");
@@ -324,7 +336,11 @@ class Extractor implements XmlHandler {
         return;
       }
       case "tbl":
-        this.endParagraph();
+        if (this.cellDepth > 0) {
+          this.observed.add("a table nested inside a cell");
+        } else {
+          this.endParagraph();
+        }
         this.tables.push({
           rows: [],
           cells: [],

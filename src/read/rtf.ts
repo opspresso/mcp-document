@@ -97,6 +97,15 @@ const LITERALS: Record<string, string> = {
   _: "-",
 };
 
+/** The sixteen places Windows-1252 differs from latin1. */
+const CP1252_HIGH = "\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178";
+
+function cp1252(code: number): string {
+  return code >= 0x80 && code <= 0x9f
+    ? (CP1252_HIGH[code - 0x80] ?? "")
+    : Buffer.from([code]).toString("latin1");
+}
+
 interface Emphasis {
   bold?: boolean;
   italic?: boolean;
@@ -119,14 +128,15 @@ class Reader {
   private inTable = false;
   /** The marker the writer drew for this item, captured from `{\listtext …}`. */
   private marker: string | undefined;
-  private capturing = false;
+  /** Depth the marker capture began at; -1 when not capturing. */
+  private capturing = -1;
   private rows: ReadRow[] = [];
   private cells: ReadCell[] = [];
   private columns = 0;
   readonly observed = new Set<string>();
 
   emit(value: string): void {
-    if (this.capturing) {
+    if (this.capturing !== -1) {
       this.marker = (this.marker ?? "") + value;
       return;
     }
@@ -144,18 +154,22 @@ class Reader {
     this.saved.push({ ...this.emphasis });
   }
 
-  restore(): void {
+  restore(depth: number): void {
     this.cut();
     this.emphasis = this.saved.pop() ?? {};
-    if (this.capturing) {
-      this.capturing = false;
+    // Only the group the capture began in. Any `}` ended it before, so a
+    // marker holding a nested group — `{\listtext{\*\x}\f3 1.\tab}`, which
+    // writers do emit — stopped being captured after the inner one and the
+    // rest of it leaked into the prose as a stray `1.`.
+    if (this.capturing !== -1 && depth <= this.capturing) {
+      this.capturing = -1;
     }
   }
 
-  captureMarker(): void {
+  captureMarker(depth: number): void {
     this.cut();
     this.marker = "";
-    this.capturing = true;
+    this.capturing = depth;
   }
 
   setEmphasis(word: string, parameter: string | undefined): void {
@@ -229,17 +243,19 @@ class Reader {
   }
 
   endParagraph(): void {
+    // Inside a table a paragraph break is a line *within* the cell, so it joins
+    // rather than ends — checked before the runs are taken, because clearing
+    // them first threw away everything the cell had said so far.
+    if (this.inTable) {
+      this.pending += " ";
+      return;
+    }
     this.cut();
     const runs = collapseRuns(this.runs);
     this.runs = [];
     const outline = this.outline;
     const marker = this.marker;
     this.marker = undefined;
-    // A row that is still open belongs to the table; a paragraph outside one
-    // closes whatever table came before it.
-    if (this.inTable) {
-      return;
-    }
     this.finishTable();
     if (runs.length === 0) {
       return;
@@ -298,6 +314,14 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
   let depth = 0;
   /** `\uN` is followed by replacement characters this many units wide. */
   let skipUnits = 0;
+  /**
+   * How many of them, which `\ucN` sets and which is not always 1.
+   *
+   * macOS writers emit `\uc0` — no fallback at all — and taking one anyway ate
+   * the character after every escape: `don\u8217 t` came back as `don’` with
+   * the `t` gone.
+   */
+  let fallbackUnits = 1;
 
   const emit = (value: string): void => {
     if (skipDepth !== -1) {
@@ -323,8 +347,8 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       if (skipDepth !== -1 && depth <= skipDepth) {
         skipDepth = -1;
       }
+      reader.restore(depth);
       depth -= 1;
-      reader.restore();
       continue;
     }
     if (character !== "\\") {
@@ -350,8 +374,10 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       const hex = source.slice(index + 2, index + 4);
       const code = Number.parseInt(hex, 16);
       // Windows-1252 is what `\ansi` means in practice, and it is what every
-      // writer that emits these actually used.
-      emit(Number.isNaN(code) ? "" : Buffer.from([code]).toString("latin1"));
+      // writer that emits these actually used — which latin1 is not: 0x80-0x9F
+      // are C1 control characters there, so `don\'92t` lost its apostrophe to
+      // an invisible one instead of gaining a `’`.
+      emit(Number.isNaN(code) ? "" : cp1252(code));
       index += 3;
       continue;
     }
@@ -383,6 +409,11 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
     if (skipDepth !== -1) {
       continue;
     }
+    if (word === "uc" && parameter !== undefined) {
+      const declared = Number(parameter);
+      fallbackUnits = Number.isInteger(declared) && declared >= 0 ? declared : 1;
+      continue;
+    }
     if (DESTINATIONS.has(word)) {
       skipDepth = depth;
       continue;
@@ -395,7 +426,7 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       continue;
     }
     if (word === "listtext" || word === "pntext") {
-      reader.captureMarker();
+      reader.captureMarker(depth);
       continue;
     }
     if (word === "u" && parameter !== undefined) {
@@ -405,7 +436,7 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       emit(String.fromCodePoint(point));
       // `\ucN` sets how many fallback characters follow; 1 is the default and
       // is what writers overwhelmingly emit.
-      skipUnits = 1;
+      skipUnits = fallbackUnits;
       continue;
     }
     switch (word) {

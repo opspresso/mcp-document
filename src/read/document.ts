@@ -93,9 +93,12 @@ function wrote(
   units?: string,
 ): { text: string; note: string; complete: boolean; counts: Record<string, number> } {
   const written = blocksToMarkdown(blocks, MAX_TEXT_CHARS);
+  // A cut table is its own loss: a document can be "all 240 blocks" and still
+  // be missing four hundred rows of the one table that did not fit.
+  const rows = written.rows ? `, ${written.rows.kept} of ${written.rows.total} table row(s)` : "";
   const note = written.complete
-    ? whole
-    : `${written.blocks} of ${blocks.length} block(s)${units ? ` across ${units}` : ""}`;
+    ? `${whole}${rows}`
+    : `${written.blocks} of ${blocks.length} block(s)${units ? ` across ${units}` : ""}${rows}`;
   return {
     text: written.text,
     note,
@@ -208,6 +211,7 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
         "footnotes",
         "comments",
         "tracked deletions",
+        "table column alignment",
         ...(kind === "presentation" ? ["speaker notes"] : []),
         ...observed,
       ],
@@ -229,6 +233,8 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
         "footnotes",
         "list numbering definitions",
         "field hyperlinks",
+        "merged table cells",
+        "table column alignment",
         ...observed,
       ],
     };

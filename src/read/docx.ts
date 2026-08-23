@@ -69,6 +69,7 @@ export interface DocxParts {
   styles?: string;
   numbering?: string;
   rels?: string;
+  sizes?: Map<string, number>;
 }
 
 /**
@@ -242,11 +243,51 @@ interface Building {
   /** How each cell was set, in the row being built and in the rows so far. */
   aligns: Array<Array<Align | undefined>>;
   rowAligns: Array<Align | undefined>;
+  /**
+   * Where each cell starts, and where a vertical merge continues.
+   *
+   * DOCX says a vertical merge with `restart` and `continue` rather than with a
+   * count, so the count has to be made: a continuation contributes no cell of
+   * its own, and unless the cell above grows a `rowspan` the serializer's grid
+   * reserves nothing and every value in that row shifts one column left.
+   */
+  starts: Array<Array<{ cell: ReadCell; start: number }>>;
+  rowStarts: Array<{ cell: ReadCell; start: number }>;
+  continued: Array<{ row: number; column: number }>;
+  column: number;
 }
 
 interface Emphasis {
   bold?: boolean;
   italic?: boolean;
+}
+
+/**
+ * Give each `restart` cell the rows its continuations claimed.
+ *
+ * A continuation names a position rather than a count, so the count is the run
+ * of rows that named it. The cell that owns the position is the nearest one
+ * above whose columns cover it — nearest, because two merges may stack in the
+ * same column and the lower one must not be handed the upper one's rows.
+ */
+function growVerticalMerges(table: Building): void {
+  for (const { row, column } of table.continued) {
+    for (let above = row - 1; above >= 0; above -= 1) {
+      const found = table.starts[above]?.find(
+        ({ cell, start }) => column >= start && column < start + (cell.colspan ?? 1),
+      );
+      if (!found) {
+        continue;
+      }
+      const covered = found.cell.rowspan ?? 1;
+      // Only the merge this row actually continues: one that already stops
+      // above this row is a different merge in the same column.
+      if (above + covered === row) {
+        found.cell.rowspan = covered + 1;
+      }
+      break;
+    }
+  }
 }
 
 /**
@@ -306,6 +347,8 @@ class Extractor implements XmlHandler {
   private indentHanging = 0;
   private imageAlt: string | undefined;
   private imageTarget: string | undefined;
+  /** Inside `w:ins` — a tracked insertion, whose text is body text regardless. */
+  private inserted = 0;
   /** `w:jc` inside the open cell, which is how a column of figures lines up. */
   private cellAlign: Align | undefined;
   paragraphs = 0;
@@ -315,15 +358,22 @@ class Extractor implements XmlHandler {
     private readonly styles: Map<string, StyleInfo>,
     private readonly numbering: Map<string, boolean[]>,
     private readonly rels: Map<string, string>,
+    /** Part name → declared size, straight off the central directory. */
+    private readonly sizes: Map<string, number> = new Map(),
   ) {}
 
   private get table(): Building | undefined {
     return this.tables[this.tables.length - 1];
   }
 
+  private revised = false;
+
   text(value: string): void {
     if (this.textDepth > 0) {
       this.pending += value;
+      if (this.inserted > 0) {
+        this.revised = true;
+      }
     }
   }
 
@@ -421,14 +471,17 @@ class Extractor implements XmlHandler {
     const level = this.headingLevel();
     const listing = this.listing() ?? (level === undefined ? this.literalMarker(runs) : undefined);
     const depth = listing?.depth ?? 0;
+    const revised = this.revised;
+    this.revised = false;
     this.resetParagraph();
     if (runs.length === 0 || (runs.length === 1 && runs[0]!.text === "")) {
       return;
     }
     // A heading that is also numbered is a heading. The level is what a reader
     // navigates by; the marker only says the author let Word count for them.
+    const marks = revised ? { marks: { revision: "inserted" as const } } : {};
     if (level !== undefined) {
-      this.blocks.push({ kind: "heading", level: level as 1 | 2 | 3 | 4 | 5 | 6, runs });
+      this.blocks.push({ kind: "heading", level: level as 1 | 2 | 3 | 4 | 5 | 6, runs, ...marks });
       return;
     }
     if (listing) {
@@ -441,7 +494,7 @@ class Extractor implements XmlHandler {
       this.blocks.push({ kind: "list", ordered: listing.ordered, items: [item] });
       return;
     }
-    this.blocks.push({ kind: "paragraph", runs });
+    this.blocks.push({ kind: "paragraph", runs, ...marks });
   }
 
   private resetParagraph(): void {
@@ -480,7 +533,13 @@ class Extractor implements XmlHandler {
         this.resetParagraph();
         return;
       case "w:pPr":
-        this.properties += 1;
+        // Self-closing gets no `close`, and the depth would stay raised for the
+        // rest of the document — which reads as "always inside paragraph
+        // properties", so every `w:b` and `w:i` after it is ignored and the
+        // file comes back with no emphasis at all. Same guard as `w:t` above.
+        if (!selfClosing) {
+          this.properties += 1;
+        }
         return;
       case "w:pStyle":
         if (this.properties > 0) {
@@ -534,6 +593,11 @@ class Extractor implements XmlHandler {
         this.indentHanging = Number.isFinite(hanging) ? hanging : 0;
         return;
       }
+      case "w:ins":
+        if (!selfClosing) {
+          this.inserted += 1;
+        }
+        return;
       case "w:r":
         this.cut();
         this.emphasis = {};
@@ -562,7 +626,12 @@ class Extractor implements XmlHandler {
       }
       case "w:drawing":
       case "w:pict":
-        this.drawing += 1;
+        // Same reason: a raised depth here reads as "still inside a drawing",
+        // so every later picture is taken for an `mc:AlternateContent`
+        // duplicate of it and none of them is reported.
+        if (!selfClosing) {
+          this.drawing += 1;
+        }
         return;
       case "wp:docPr":
         if (this.drawing > 0) {
@@ -587,7 +656,13 @@ class Extractor implements XmlHandler {
         return;
       }
       case "w:tbl":
-        this.endParagraph();
+        if (this.cellDepth > 0) {
+          // Reported here rather than at `finishTable`, which returns early on
+          // a table with no columns and so never said anything at all.
+          this.observed.add("a table nested inside a cell");
+        } else {
+          this.endParagraph();
+        }
         this.tables.push({
           rows: [],
           cells: [],
@@ -598,6 +673,10 @@ class Extractor implements XmlHandler {
           continues: false,
           aligns: [],
           rowAligns: [],
+          starts: [],
+          rowStarts: [],
+          continued: [],
+          column: 0,
         });
         return;
       case "w:tblHeader":
@@ -638,6 +717,9 @@ class Extractor implements XmlHandler {
       case "w:pPr":
         this.properties = Math.max(0, this.properties - 1);
         return;
+      case "w:ins":
+        this.inserted = Math.max(0, this.inserted - 1);
+        return;
       case "w:hyperlink":
         this.cut();
         this.href = undefined;
@@ -658,10 +740,13 @@ class Extractor implements XmlHandler {
           return;
         }
         this.endParagraph();
+        const part = target ? partOfTarget("word", target) : undefined;
+        const bytes = part === undefined ? undefined : this.sizes.get(part);
         this.blocks.push({
           kind: "image",
           alt: alt !== undefined && alt !== "" ? alt : "image",
-          ...(target ? { target: partOfTarget("word", target) } : {}),
+          ...(part ? { target: part } : {}),
+          ...(bytes === undefined ? {} : { bytes }),
         });
         return;
       }
@@ -680,6 +765,8 @@ class Extractor implements XmlHandler {
         this.cellDepth = Math.max(0, this.cellDepth - 1);
         const table = this.table;
         if (!table || this.cellDepth > 0) {
+          // A nested cell's setting is not the outer cell's.
+          this.cellAlign = undefined;
           return;
         }
         this.cut();
@@ -698,11 +785,22 @@ class Extractor implements XmlHandler {
         // grid reserves it from the `rowspan` rather than from a placeholder.
         const set = this.cellAlign;
         this.cellAlign = undefined;
-        if (!continues) {
-          table.cells.push({ runs, ...(span > 1 ? { colspan: span } : {}) });
+        const start = table.column;
+        table.column += span;
+        if (continues) {
+          // The cell above already covers this position; it is given the row
+          // when the table closes, once the run of continuations is known.
+          table.continued.push({ row: table.rows.length, column: start });
           for (let column = 0; column < span; column += 1) {
-            table.rowAligns.push(runs.length === 0 ? undefined : set);
+            table.rowAligns.push(undefined);
           }
+          return;
+        }
+        const cell: ReadCell = { runs, ...(span > 1 ? { colspan: span } : {}) };
+        table.cells.push(cell);
+        table.rowStarts.push({ cell, start });
+        for (let column = 0; column < span; column += 1) {
+          table.rowAligns.push(runs.length === 0 ? undefined : set);
         }
         return;
       }
@@ -711,14 +809,16 @@ class Extractor implements XmlHandler {
         if (!table) {
           return;
         }
-        const width = table.cells.reduce((total, cell) => total + (cell.colspan ?? 1), 0);
-        table.columns = Math.max(table.columns, width);
+        table.columns = Math.max(table.columns, table.column);
         table.rows.push({ cells: table.cells, ...(table.header ? { header: true } : {}) });
         // A header row's own setting is not the column's: a heading is often
         // centred over figures that are not.
         table.aligns.push(table.header ? [] : table.rowAligns);
+        table.starts.push(table.rowStarts);
         table.cells = [];
         table.rowAligns = [];
+        table.rowStarts = [];
+        table.column = 0;
         table.header = false;
         return;
       }
@@ -738,6 +838,7 @@ class Extractor implements XmlHandler {
     if (this.tables.length > 0) {
       this.observed.add("a table nested inside a cell");
     }
+    growVerticalMerges(table);
     this.blocks.push({
       kind: "table",
       rows: table.rows,
@@ -763,6 +864,7 @@ export function documentXmlToBlocks(xml: string, parts: DocxParts = {}): DocxBlo
     parts.styles === undefined ? new Map() : stylesOf(parts.styles),
     parts.numbering === undefined ? new Map() : numberingOf(parts.numbering),
     parts.rels === undefined ? new Map() : relationshipsOf(parts.rels),
+    parts.sizes ?? new Map(),
   );
   walkXml(xml, extractor);
   const blocks = extractor.done();
@@ -795,6 +897,7 @@ export function docxToBlocks(bytes: Uint8Array): DocxBlocks {
     ...(styles === undefined ? {} : { styles }),
     ...(numbering === undefined ? {} : { numbering }),
     ...(rels === undefined ? {} : { rels }),
+    sizes: new Map(archive.entries.map((entry) => [entry.name, entry.originalSize])),
   });
   if (result.blocks.length === 0) {
     throw new DocxError(

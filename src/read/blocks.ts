@@ -30,8 +30,6 @@ import type { Align, Code, Heading, List, Paragraph, Quote, Rule, Run } from "..
 export interface Marks {
   /** The style the document named: `Heading 1`, `제목 1`, a house style. */
   style?: string;
-  /** Which list this item belongs to, and at what level. */
-  list?: { id: string; level: number };
   /**
    * The number the document drew beside this list's first item.
    *
@@ -40,7 +38,13 @@ export interface Marks {
    * which is a different claim from the one the file makes.
    */
   start?: number;
-  /** A tracked change nobody has accepted or rejected yet. */
+  /**
+   * A tracked change nobody has accepted or rejected yet.
+   *
+   * An insertion's text is in the body either way — it is `w:t` like any other
+   * — so the text says nothing about it and this is the only place a reader
+   * learns that a paragraph is a proposal rather than the document.
+   */
   revision?: "inserted" | "deleted";
   /**
    * Where a shape sits on its slide, in EMU.
@@ -98,7 +102,10 @@ export interface ReadImage {
    * outbound at all; it is what the document points at, said out loud.
    */
   target?: string;
-  /** From the zip's central directory, so reporting it inflates nothing. */
+  /**
+   * What the part weighs, from the archive's central directory — so saying it
+   * inflates nothing.
+   */
   bytes?: number;
 }
 
