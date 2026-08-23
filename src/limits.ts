@@ -74,6 +74,20 @@ export const MAX_INSPECTED_CELLS = 10_000;
  */
 export const MAX_REPEATED_COLUMNS = 256;
 
+/**
+ * Blocks one `inspect_document` call may describe, and how much of each block's
+ * own text a line shows.
+ *
+ * One budget from two sides, like every other pair here. A line is its keys
+ * plus a preview — around 160 characters at this preview length — so 500 lines
+ * lands near 80,000, inside `MAX_TEXT_CHARS` and inside the caller's own
+ * 100,000-character cut with the provenance header on top of it. Raising
+ * either without the other produces a window that is always cut before it is
+ * filled.
+ */
+export const MAX_INSPECTED_BLOCKS = 500;
+export const MAX_BLOCK_PREVIEW_CHARS = 120;
+
 export function truncateText(text: string, maxChars: number): { text: string; note?: string } {
   if (text.length <= maxChars) {
     return { text };

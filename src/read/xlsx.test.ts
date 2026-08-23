@@ -7,7 +7,14 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildZip } from "../zip.js";
-import { columnOf, inspectXlsx, xlsxToText, XlsxError } from "./xlsx.js";
+import {
+  columnOf,
+  dateStylesOf,
+  inspectXlsx,
+  serialToIso,
+  xlsxToText,
+  XlsxError,
+} from "./xlsx.js";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
 
@@ -159,4 +166,67 @@ test("a workbook with nothing in it is refused rather than returned empty", () =
   // An empty success reads as "this workbook has no data", which is a different
   // claim from "I could not read it".
   assert.throws(() => read(oneSheet("")), XlsxError);
+});
+
+test("a sheet name is decoded, not spelled the way the XML escaped it", () => {
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(workbook("A&amp;B")),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/worksheets/sheet1.xml": utf8(sheet(`<row r="1"><c r="A1" t="str"><v>x</v></c></row>`)),
+  });
+  assert.equal(read(bytes).text, "## A&B\nx");
+});
+
+test("a boolean is TRUE or FALSE, not 0 or 1", () => {
+  // Stored as a number, so a column of them read as numbers — which is not
+  // lossy so much as a different answer.
+  const bytes = oneSheet(
+    `<row r="1"><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c></row>`,
+  );
+  assert.equal(read(bytes).text, "## Sheet1\nTRUE | FALSE");
+});
+
+test("a date is a date, not the serial number it is stored as", () => {
+  // `45123` is unreadable and, worse, reads as data.
+  const styles =
+    '<styleSheet><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/>' +
+    "</cellXfs></styleSheet>";
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(workbook("Sheet1")),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/styles.xml": utf8(styles),
+    "xl/worksheets/sheet1.xml": utf8(
+      sheet(`<row r="1"><c r="A1" s="1"><v>45123</v></c><c r="B1" s="0"><v>45123</v></c></row>`),
+    ),
+  });
+  // The styled cell is a date; the unstyled one keeps the number it holds.
+  assert.equal(read(bytes).text, "## Sheet1\n2023-07-16 | 45123");
+});
+
+test("the 1900 leap-year bug and the 1904 epoch are both accounted for", () => {
+  // Serial 60 is the 1900-02-29 Excel believes in and the calendar does not,
+  // so every serial past it is one day ahead of a naive epoch.
+  assert.equal(serialToIso(59, false), "1900-02-28");
+  assert.equal(serialToIso(61, false), "1900-03-01");
+  assert.equal(serialToIso(1, true), "1904-01-02");
+  // A fraction is a clock, and dropping it would say two moments were one.
+  assert.equal(serialToIso(45123.5, false), "2023-07-16 12:00:00");
+  assert.equal(serialToIso(-1, false), undefined);
+});
+
+test("only an unambiguous format is read as a date", () => {
+  // Emulating currency, separators or a conditional format would be a
+  // plausible-but-wrong generator; a raw value is honest where a guess is not.
+  const styles = (code: string) =>
+    `<styleSheet><numFmts><numFmt numFmtId="200" formatCode="${code}"/></numFmts>` +
+    '<cellXfs count="1"><xf numFmtId="200" applyNumberFormat="1"/></cellXfs></styleSheet>';
+  assert.deepEqual([...dateStylesOf(styles("yyyy-mm-dd"))], [0]);
+  assert.deepEqual([...dateStylesOf(styles("h:mm"))], [0]);
+  assert.deepEqual([...dateStylesOf(styles("#,##0.00"))], []);
+  assert.deepEqual([...dateStylesOf(styles("&quot;$&quot;#,##0"))], []);
+  // A style that says not to apply its number format is not a date either.
+  assert.deepEqual(
+    [...dateStylesOf('<styleSheet><cellXfs><xf numFmtId="14" applyNumberFormat="0"/></cellXfs></styleSheet>')],
+    [],
+  );
 });

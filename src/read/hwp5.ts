@@ -23,7 +23,10 @@
 import { inflateRawSync } from "node:zlib";
 import CFB from "cfb";
 import { MAX_EXPANDED_BYTES } from "../limits.js";
-import { normalize } from "./lines.js";
+import { MAX_TEXT_CHARS } from "../limits.js";
+import type { ReadBlock } from "./blocks.js";
+import { collapseRuns } from "./lines.js";
+import { blocksToMarkdown } from "./serialize.js";
 import { DocumentError } from "../errors.js";
 
 export class HwpError extends DocumentError {}
@@ -34,6 +37,8 @@ export interface HwpText {
   sections: number;
   /** The version the file declares, e.g. "5.0.3.0". */
   version: string;
+  blocks: ReadBlock[];
+  observed: string[];
 }
 
 const SIGNATURE = "HWP Document File";
@@ -103,13 +108,36 @@ export function decodeParaText(payload: Uint8Array): string {
  * exceptional, since a paragraph of prose passes 4,095 bytes at around two
  * thousand characters.
  */
+export interface HwpParagraph {
+  text: string;
+  /**
+   * The record's nesting level, which the header has always carried in bits
+   * 10-19 and this reader parsed and discarded.
+   *
+   * A paragraph inside a table cell or a drawing sits below the control that
+   * holds it, and level 0 is the body. Nothing here reconstructs the table —
+   * the record layouts that would say which cell this is are unverified
+   * against the HWP 5.0 spec, and a wrong field offset resolves to a real
+   * shape and yields a confident wrong answer, which is the `.doc` failure
+   * this repository refuses to ship. What the level *can* say without any of
+   * that is "this was inside something", which is why a table stops vanishing
+   * without a trace.
+   */
+  level: number;
+}
+
 export function paragraphsOf(section: Uint8Array): string[] {
+  return paragraphRecordsOf(section).map((paragraph) => paragraph.text);
+}
+
+export function paragraphRecordsOf(section: Uint8Array): HwpParagraph[] {
   const view = new DataView(section.buffer, section.byteOffset, section.byteLength);
-  const paragraphs: string[] = [];
+  const paragraphs: HwpParagraph[] = [];
   let offset = 0;
   while (offset + 4 <= section.byteLength) {
     const header = view.getUint32(offset, true);
     const tag = header & 0x3ff;
+    const level = (header >>> 10) & 0x3ff;
     let size = (header >>> 20) & 0xfff;
     offset += 4;
     if (size === 0xfff) {
@@ -125,7 +153,7 @@ export function paragraphsOf(section: Uint8Array): string[] {
       break;
     }
     if (tag === HWPTAG_PARA_TEXT) {
-      paragraphs.push(decodeParaText(section.subarray(offset, offset + size)));
+      paragraphs.push({ text: decodeParaText(section.subarray(offset, offset + size)), level });
     }
     offset += size;
   }
@@ -230,17 +258,31 @@ export function hwpToText(bytes: Uint8Array): HwpText {
   if (paths.length === 0) {
     throw new HwpError("this .hwp has no BodyText/Section stream, so it has no body");
   }
-  const lines = paths.flatMap((path) =>
-    paragraphsOf(inflate(streams.get(path)!, compressed, path)).flatMap((paragraph) =>
-      paragraph.split("\n"),
-    ),
-  );
-  const text = normalize(lines);
+  const blocks: ReadBlock[] = [];
+  const observed = new Set<string>();
+  for (const path of paths) {
+    for (const paragraph of paragraphRecordsOf(inflate(streams.get(path)!, compressed, path))) {
+      // A paragraph below the body level sits inside a control — a table cell,
+      // a drawing, a footnote. Which one, and where in it, is what the record
+      // layouts would say and what is not verified here; that it was inside
+      // something is what stops a table from vanishing without a trace.
+      if (paragraph.level > 0) {
+        observed.add("tables and drawings, which are reported as nested text rather than rebuilt");
+      }
+      for (const line of paragraph.text.split("\n")) {
+        const runs = collapseRuns([{ text: line }]);
+        if (runs.length > 0) {
+          blocks.push({ kind: "paragraph", runs });
+        }
+      }
+    }
+  }
+  const text = blocksToMarkdown(blocks, MAX_TEXT_CHARS).text;
   if (text === "") {
     throw new HwpError(
       `this .hwp has ${paths.length} section(s) but no text in any of them — its content is most ` +
         "likely images, which need OCR rather than text extraction",
     );
   }
-  return { text, sections: paths.length, version };
+  return { text, sections: paths.length, version, blocks, observed: [...observed] };
 }

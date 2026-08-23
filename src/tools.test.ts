@@ -50,7 +50,13 @@ const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 test("all tools are offered with an object schema", () => {
   assert.deepEqual(
     TOOLS.map((tool) => tool.name),
-    ["read_document", "inspect_spreadsheet", "render_spreadsheet", "render_document"],
+    [
+      "read_document",
+      "inspect_document",
+      "inspect_spreadsheet",
+      "render_spreadsheet",
+      "render_document",
+    ],
   );
   for (const tool of TOOLS) {
     assert.equal(tool.inputSchema.type, "object");
@@ -334,10 +340,11 @@ test("every call leaves one line naming the tool and the format, never the conte
   const lines = await linesDuring(async () => {
     await call("render_document", { format: "docx", content: "# Report\n\nthe secret paragraph" });
     await call("read_document", { filename: "Quarterly.HWP", content: base64(new Uint8Array([1, 2, 3])) });
+    await call("inspect_document", { filename: "Quarterly.HWP", content: base64(new Uint8Array([1, 2, 3])) });
   });
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 3);
 
-  const [rendered, read] = lines;
+  const [rendered, read, inspected] = lines;
   assert.equal(rendered?.tool, "render_document");
   assert.equal(rendered?.format, "docx");
   assert.equal(rendered?.ok, true);
@@ -349,5 +356,57 @@ test("every call leaves one line naming the tool and the format, never the conte
   assert.equal(read?.format, "hwp");
   assert.equal(read?.ok, false);
 
+  assert.equal(inspected?.tool, "inspect_document");
+  assert.equal(inspected?.format, "hwp");
+  assert.equal(inspected?.ok, false);
+
   assert.doesNotMatch(JSON.stringify(lines), /secret|Quarterly/);
+});
+
+test("inspect_document describes a document's shape rather than writing it out", async () => {
+  const bytes = renderDocx(
+    parseMarkdown("# 보고서\n\n본문입니다.\n\n| 항목 | 값 |\n|---|---:|\n| a | 1 |"),
+    { title: "보고서", created: "2026-01-01T00:00:00.000Z" },
+  );
+  const { text, structured, isError } = await call("inspect_document", { content: base64(bytes), filename: "r.docx" });
+  assert.equal(isError, false, text);
+  // The provenance header survives, which a JSON body could not have carried.
+  assert.match(text, /untrusted content/);
+  assert.match(text, /^\d+ heading level=1 chars=3 "보고서"$/m);
+  assert.match(text, /^\d+ table rows=2 cols=2 header=stated align=left,right$/m);
+  assert.match(text, /^ {2}row header$/m);
+  assert.match(text, /^ {4}cell "항목"$/m);
+  assert.equal(structured?.operation, "inspect_document");
+  assert.equal(structured?.complete, true);
+  assert.equal(structured?.sourceFormat, "docx");
+});
+
+test("inspect_document pages, and says which window it described", async () => {
+  const long = Array.from({ length: 30 }, (_, index) => `문단 ${index}`).join("\n\n");
+  const bytes = renderDocx(parseMarkdown(long), { title: "t", created: "2026-01-01T00:00:00.000Z" });
+  const { text, structured } = await call("inspect_document", { content: base64(bytes), from: 5, to: 7 });
+  assert.equal(structured?.from, 5);
+  assert.equal(structured?.to, 7);
+  assert.equal(structured?.complete, false);
+  assert.equal(text.trim().split("\n").filter((line) => /^\d+ /.test(line)).length, 3);
+});
+
+test("inspect_document refuses a workbook by name", async () => {
+  // Two tools answering the same question differently is worse than one
+  // refusal that costs a sentence.
+  const bytes = buildZip({
+    "xl/workbook.xml": new TextEncoder().encode('<?xml version="1.0"?><workbook><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>'),
+    "xl/_rels/workbook.xml.rels": new TextEncoder().encode('<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    "xl/worksheets/sheet1.xml": new TextEncoder().encode('<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" t="str"><v>x</v></c></row></sheetData></worksheet>'),
+  });
+  const { text, isError } = await call("inspect_document", { content: base64(bytes), filename: "b.xlsx" });
+  assert.equal(isError, true);
+  assert.match(text, /inspect_spreadsheet/);
+});
+
+test("a bad window is refused before any bytes are read", async () => {
+  const { text, isError, structured } = await call("inspect_document", { content: "AAAA", from: -1 });
+  assert.equal(isError, true);
+  assert.equal((structured?.error as { field?: string } | undefined)?.field, "from");
+  assert.match(text, /whole number/);
 });

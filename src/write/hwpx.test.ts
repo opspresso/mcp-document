@@ -62,7 +62,13 @@ test("what this writes, this server recognises as HWPX", () => {
 });
 
 test("headings and paragraphs come back as their text", () => {
-  assert.equal(roundTrip("# 분기 보고서\n\n첫 문단\n\n둘째 문단"), "분기 보고서\n첫 문단\n둘째 문단");
+  // This renderer writes `hh:heading type="NONE"` and sets its headings apart
+  // by size and weight, so the reader recovers the weight and not a level.
+  // A 한글-authored document with a real 개요 comes back as a heading.
+  assert.equal(
+    roundTrip("# 분기 보고서\n\n첫 문단\n\n둘째 문단"),
+    "**분기 보고서**\n\n첫 문단\n\n둘째 문단",
+  );
 });
 
 test("lists come back as the markers they were written with", () => {
@@ -72,7 +78,7 @@ test("lists come back as the markers they were written with", () => {
 
 test("a table round-trips, and every cell holds a paragraph", () => {
   const bytes = build("| 이름 | 값 |\n|---|---|\n| 가 | 1 |");
-  assert.equal(hwpxToText(bytes).text, "이름 | 값\n가 | 1");
+  assert.equal(hwpxToText(bytes).text, "| **이름** | **값** |\n| --- | --- |\n| 가 | 1 |");
   const section = partOf(bytes, "Contents/section0.xml");
   // A `hp:tc` with no paragraph inside is what makes 한글 refuse a file.
   assert.equal(/<hp:tc[^>]*>(?:(?!<hp:p[ >]).)*<\/hp:tc>/s.test(section), false);
@@ -216,8 +222,8 @@ test("a report gets a cover, a contents list and numbered chapters, each on its 
   const text = roundTrip("# 보고서\n\n부제 한 줄\n\n# 첫 장\n\n본문\n\n# 둘째 장\n\n## 절\n\n내용");
   assert.ok(text.includes("목차"), text);
   assert.ok(text.indexOf("목차") < text.indexOf("01"), "contents precede the first chapter");
-  assert.ok(text.includes("01\n첫 장"), text);
-  assert.ok(text.includes("02\n둘째 장"), text);
+  assert.ok(text.includes("**01**\n\n**첫 장**"), text);
+  assert.ok(text.includes("**02**\n\n**둘째 장**"), text);
 });
 
 test("the cover styles resolve against the header, like every other id", () => {

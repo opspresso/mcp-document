@@ -5,7 +5,18 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseInline, parseMarkdown, plainTextOf, withoutDirectives, type Block } from "./markdown.js";
+import {
+  escapeInline,
+  escapeLineStart,
+  opensBlock,
+  parseInline,
+  parseMarkdown,
+  plainTextOf,
+  renderRuns,
+  withoutDirectives,
+  type Block,
+  type Run,
+} from "./markdown.js";
 
 function blocks(source: string): Block[] {
   return parseMarkdown(source).blocks;
@@ -211,4 +222,104 @@ test("directive nesting stops recursing at a sane depth", () => {
   const hostile = Array.from({ length: 2000 }, () => ":::a").join("\n");
   const parsed = parseMarkdown(hostile);
   assert.ok(parsed.blocks.length > 0, "it parses rather than overflowing");
+});
+
+/**
+ * The dialect written and read back.
+ *
+ * These are the specification for the serializer: a reader that recovers a
+ * document's shape has to be able to *say* it, and every string below is a way
+ * for a naive writer to say something the parser then reads as something else.
+ * A failure here is invisible downstream — the Markdown looks fine and means
+ * something the document never said.
+ */
+
+/** Text → Markdown → text. What a paragraph of it must survive. */
+function throughParagraph(text: string): string {
+  const written = escapeLineStart(escapeInline(text));
+  const [block] = parseMarkdown(written).blocks;
+  assert.equal(block?.kind, "paragraph", `\`${written}\` did not parse as a paragraph`);
+  return block?.kind === "paragraph" ? plainTextOf(block.runs) : "";
+}
+
+test("any text can be written as a paragraph and read back as itself", () => {
+  for (const text of [
+    "a|b",
+    "# not a heading",
+    "---",
+    "***",
+    "```",
+    "~~~",
+    ":::cards",
+    ":::",
+    "|---|",
+    "| a | b |",
+    "snake_case_name",
+    "**not bold",
+    "a*b*c",
+    "1. not a list",
+    "1) not a list",
+    "- not a list",
+    "+ not a list",
+    "> not a quote",
+    "[not](a link",
+    "text with ] bracket",
+    "[label](https://example.com)",
+    "![alt](x.png)",
+    "back\\slash",
+    "a `tick` here",
+    "C:\\Users\\bruce",
+    "100% — 50% = 50%",
+    "제목1 · 개요 2",
+  ]) {
+    assert.equal(throughParagraph(text), text, `round trip failed for: ${text}`);
+  }
+});
+
+test("opensBlock knows every line the parser would take for a block", () => {
+  for (const line of ["# h", "---", "```ts", ":::cards", ":::", "> q", "- i", "1. i", "|---|---|"]) {
+    assert.ok(opensBlock(line), `${line} opens a block`);
+  }
+  for (const line of ["plain", "a - b", "1.no space", "#nospace", "a | b"]) {
+    assert.ok(!opensBlock(line), `${line} does not open a block`);
+  }
+});
+
+test("styled runs come back styled", () => {
+  const round = (runs: Run[]): Run[] => parseInline(renderRuns(runs));
+  assert.deepEqual(round([{ text: "bold", bold: true }]), [{ text: "bold", bold: true }]);
+  assert.deepEqual(round([{ text: "it", italic: true }]), [{ text: "it", italic: true }]);
+  assert.deepEqual(round([{ text: "both", bold: true, italic: true }]), [
+    { text: "both", bold: true, italic: true },
+  ]);
+  assert.deepEqual(round([{ text: "a|b", code: true }]), [{ text: "a|b", code: true }]);
+  assert.deepEqual(round([{ text: "label", href: "https://x/a(b)" }]), [
+    { text: "label", href: "https://x/a(b)" },
+  ]);
+});
+
+test("padding around emphasis stays outside the delimiters", () => {
+  // `**  bold  **` is not bold — the parser requires a non-space beside each
+  // delimiter — so a writer that wraps the padding loses the emphasis and says
+  // nothing about it.
+  assert.equal(renderRuns([{ text: "  bold  ", bold: true }]), "  **bold**  ");
+  assert.deepEqual(parseInline(renderRuns([{ text: " x ", italic: true }])), [
+    { text: " " },
+    { text: "x", italic: true },
+    { text: " " },
+  ]);
+  // Nothing but whitespace cannot carry emphasis at all, so it gets none.
+  assert.equal(renderRuns([{ text: "   ", bold: true }]), "   ");
+});
+
+test("a code span holding backticks gets a longer fence", () => {
+  assert.equal(renderRuns([{ text: "a ` b", code: true }]), "``a ` b``");
+  assert.deepEqual(parseInline(renderRuns([{ text: "a ` b", code: true }])), [
+    { text: "a ` b", code: true },
+  ]);
+});
+
+test("a link label that holds a bracket does not end early", () => {
+  const runs = parseInline(renderRuns([{ text: "see [1]", href: "https://x" }]));
+  assert.deepEqual(runs, [{ text: "see [1]", href: "https://x" }]);
 });

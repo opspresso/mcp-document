@@ -4,10 +4,21 @@ An MCP server that parses office documents and writes them.
 
 | Tool | Takes | Returns |
 |---|---|---|
-| `read_document(content, filename?)` | DOCX, PPTX, XLSX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as an MCP `text` block |
+| `read_document(content, filename?)` | DOCX, PPTX, XLSX, HWP, HWPX, ODT/ODS/ODP, RTF — bytes as base64 | the **text**, as Markdown that keeps the document's shape |
+| `inspect_document(content, filename?, from?, to?)` | the same formats except XLSX | the **structure**, one line per block — spans, alignment, levels, pictures |
 | `inspect_spreadsheet(content, filename?, mode?, includeHidden?)` | XLSX bytes as base64 | addressed cached values and formulas, without executing them |
 | `render_spreadsheet(sheets, title?, filename?)` | named rows and explicit formula cells | a new **XLSX file**, as an MCP `resource` block |
 | `render_document(format, content, profile?, title?, filename?, assets?)` | Markdown → `docx` `pptx` `pdf` `hwpx` | the **file**, as an MCP `resource` block |
+
+**A document is not a list of its words.** A report's table says which column a
+figure belongs to, a contract's numbering says which clause is which, and a deck
+says what was a title. Reading all of that out as one line after another loses
+the part a reader was going to use, so `read_document` returns Markdown that
+keeps it — real tables with their alignment, lists that count, headings at their
+level, links with their targets, a mark where a picture stood.
+`inspect_document` carries what Markdown has no syntax for: which cells a merge
+covers, which row the document itself called a header, where a shape sat on its
+slide.
 
 It exists because a document is not its text, and a report is not a file. An
 agent handed a `.hwp` or a `.docx` cannot open it — the format is a container it
