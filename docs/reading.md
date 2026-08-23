@@ -16,7 +16,7 @@ own first bytes is wrong about the file.
 | PPTX | `ppt/slides/slide*.xml` in deck order, numbered; speaker notes left out |
 | HWPX | `Contents/section*.xml`, in numeric order |
 | HWP 5.x | OLE compound file → deflate per section → `HWPTAG_PARA_TEXT` records |
-| ODT / ODS / ODP | one `content.xml`, one reader — ODF marks structure the same way whichever kind it is |
+| ODT / ODS / ODP | one `content.xml`, one reader — ODF marks structure the same way whichever kind it is; a paragraph's text only, so tracked deletions, comments, footnotes and speaker notes stay out |
 | RTF | control words, groups and escapes, with destinations (`\fonttbl`, `{\*\generator}`) skipped whole |
 
 PDF, plain text and HTML are the caller's: none needs a parser Agent Studio lacks,
@@ -52,6 +52,20 @@ opened at all.
 A heading style becomes its Markdown `#`, a list paragraph becomes `- `, and
 table cells are separated by ` | `. Everything else — fonts, colours, spacing —
 is presentation, and a model has no use for it.
+
+**A heading that is also numbered is a heading.** Word writes `w:pStyle` before
+`w:numPr`, so a marker chosen while walking past each element overwrote the
+level — and numbering the headings is the ordinary shape of a Korean or a legal
+template. The paragraph's properties are collected and read at its end instead.
+`w:numId="0"`, which is how Word says a paragraph's numbering was removed, is
+not a list.
+
+**A column a cell does not fill still costs a separator.** ODF stores a run of
+identical or empty cells once, with `table:number-columns-repeated`, and a
+merge leaves `table:covered-table-cell` behind; a reader that emits one
+separator per element puts every value after either of them in a column it does
+not belong to. The run is paid for when a later cell in the row needs it, which
+is also why the `16384`-wide padding every ODS row ends with costs nothing.
 
 **What it refuses, it names.** A PDF, a web page and a text file are each
 identified and sent back to the caller that reads them; the 97-2003 binaries

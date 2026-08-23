@@ -36,7 +36,19 @@ function attribute(attributes: string, name: string): string | undefined {
 class Extractor implements XmlHandler {
   private readonly lines: string[] = [];
   private buffer = "";
-  private prefix = "";
+  /**
+   * What the open paragraph's properties said, read at `</w:p>` rather than
+   * applied as the walk passes each element.
+   *
+   * Inside `w:pPr` the schema puts `w:pStyle` before `w:numPr`, so a prefix
+   * assigned on the way past let the list marker overwrite the heading — and a
+   * numbered heading, which is the ordinary shape of a Korean or a legal
+   * template, came back as a bullet with its level gone.
+   */
+  private heading = 0;
+  private numbering = false;
+  /** `w:numId="0"` is Word saying this paragraph's numbering was taken away. */
+  private numberless = false;
   private textDepth = 0;
   private cellDepth = 0;
   paragraphs = 0;
@@ -64,18 +76,21 @@ class Extractor implements XmlHandler {
         this.buffer += "\n";
         return;
       case "w:p":
-        this.prefix = "";
+        this.resetParagraph();
         return;
       case "w:tc":
         this.cellDepth += 1;
         return;
       case "w:numPr":
-        this.prefix = "- ";
+        this.numbering = true;
+        return;
+      case "w:numId":
+        this.numberless = attribute(attributes, "w:val") === "0";
         return;
       case "w:pStyle": {
         const level = /^(?:Heading|heading)\s*([1-6])$/.exec(attribute(attributes, "w:val") ?? "");
         if (level?.[1]) {
-          this.prefix = `${"#".repeat(Number(level[1]))} `;
+          this.heading = Number(level[1]);
         }
         return;
       }
@@ -113,10 +128,27 @@ class Extractor implements XmlHandler {
     }
   }
 
+  private resetParagraph(): void {
+    this.heading = 0;
+    this.numbering = false;
+    this.numberless = false;
+  }
+
+  /**
+   * A heading that is also numbered is a heading. The level is what a reader
+   * navigates by; the marker only says the author let Word count for them.
+   */
+  private prefixOf(): string {
+    if (this.heading > 0) {
+      return `${"#".repeat(this.heading)} `;
+    }
+    return this.numbering && !this.numberless ? "- " : "";
+  }
+
   private endLine(): void {
-    const line = this.prefix + this.buffer;
+    const line = this.prefixOf() + this.buffer;
     this.buffer = "";
-    this.prefix = "";
+    this.resetParagraph();
     for (const part of line.split("\n")) {
       this.lines.push(part);
     }

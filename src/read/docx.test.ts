@@ -82,3 +82,22 @@ test("`xml:space` and escaped characters are handled", () => {
   const xml = '<w:p><w:r><w:t xml:space="preserve">a &amp; b </w:t><w:t>c</w:t></w:r></w:p>';
   assert.equal(documentXmlToText(xml).text, "a & b c");
 });
+
+test("a numbered heading is still a heading", () => {
+  // `w:pStyle` comes before `w:numPr` inside `w:pPr`, so a prefix assigned as
+  // the walk passes each element let the list marker erase the heading. Korean
+  // and legal templates number their headings as a matter of course.
+  const xml =
+    '<w:p><w:pPr><w:pStyle w:val="Heading2"/>' +
+    '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>' +
+    "<w:r><w:t>Background</w:t></w:r></w:p>";
+  assert.equal(documentXmlToText(xml).text, "## Background");
+});
+
+test("numbering removed is not a list", () => {
+  // `w:numId="0"` is how Word says this paragraph's numbering was taken away.
+  const xml =
+    '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr></w:pPr>' +
+    "<w:r><w:t>plain</w:t></w:r></w:p>";
+  assert.equal(documentXmlToText(xml).text, "plain");
+});

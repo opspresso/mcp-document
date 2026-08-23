@@ -133,9 +133,22 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
         text,
         parts === undefined
           ? "the document body, without headers or footers"
-          : `all ${parts} ${unit}(s)`,
+          : kind === "presentation"
+            ? `all ${parts} slide(s), without speaker notes`
+            : `all ${parts} sheet(s)`,
       ),
-      omissions: ["formatting", "headers", "footers"],
+      // The last four were never a decision until now: the reader had no text
+      // gate, so it returned tracked deletions, comment bodies, footnotes and
+      // an ODP's speaker notes as body text while this list said otherwise.
+      omissions: [
+        "formatting",
+        "headers",
+        "footers",
+        "footnotes",
+        "comments",
+        "tracked deletions",
+        ...(kind === "presentation" ? ["speaker notes"] : []),
+      ],
       ...(parts === undefined ? {} : { counts: { [unit === "sheet" ? "sheets" : "slides"]: parts } }),
     };
   }
