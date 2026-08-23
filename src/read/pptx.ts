@@ -24,7 +24,7 @@ import { attributeOf, localName, walkXml, type XmlHandler } from "../xml.js";
 import { openZip, type ZipEntry } from "../zip.js";
 import { DocumentError } from "../errors.js";
 import { drawnMarker, type ReadBlock, type ReadCell, type ReadRow } from "./blocks.js";
-import { relationshipsOf } from "./docx.js";
+import { partOfTarget, relationshipsOf } from "./docx.js";
 import { collapseRuns } from "./lines.js";
 import { blocksToMarkdown } from "./serialize.js";
 
@@ -76,7 +76,7 @@ export function deckOrder(
     if (target === undefined) {
       continue;
     }
-    const name = `ppt/${target.replace(/^\.?\//, "")}`;
+    const name = partOfTarget("ppt", target);
     if (present.includes(name)) {
       ordered.push(name);
     }
@@ -398,7 +398,7 @@ class Extractor implements XmlHandler {
         this.blocks.push({
           kind: "image",
           alt: alt !== undefined && alt !== "" ? alt : "image",
-          ...(target ? { target: `ppt/${target.replace(/^\.?\//, "")}` } : {}),
+          ...(target ? { target: partOfTarget("ppt", target) } : {}),
         });
         return;
       }

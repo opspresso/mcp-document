@@ -576,6 +576,28 @@ function linkTarget(href: string): string {
   return `<${href.replace(/>/g, "%3E")}>`;
 }
 
+/**
+ * A picture as `![alt](target)`.
+ *
+ * The alt text is escaped like any other text, and for the same reason a link
+ * label is: a bracket inside it ends the label early. Unescaped, an alt of
+ * `a](x) b` writes `![a](x) b](m.png)`, which reads back as a *link* to `x`
+ * followed by stray characters — the caption gone and an address invented.
+ */
+export function renderImage(alt: string, target: string): string {
+  return `![${escapeInline(alt)}](${linkTarget(target)})`;
+}
+
+/**
+ * A fenced block's info string, which is one word and no backticks.
+ *
+ * `FENCE` captures `[^`\s]*`, so anything else in a language is not read back
+ * as one — and a backtick in it closes the fence it was supposed to open.
+ */
+export function fenceLanguage(language: string): string {
+  return language.replace(/`/g, "").trim().split(/\s+/)[0] ?? "";
+}
+
 /** Runs as Markdown: `**bold**`, `` `code` ``, `[label](href)`. */
 export function renderRuns(runs: readonly Run[]): string {
   return mergeRuns(runs)

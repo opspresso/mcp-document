@@ -71,6 +71,21 @@ export interface DocxParts {
   rels?: string;
 }
 
+/**
+ * A relationship target as a part name inside the package.
+ *
+ * A target is relative to the part that declared it — `media/image1.png` from
+ * `word/document.xml` is `word/media/image1.png` — except when it is written
+ * absolute, where the leading slash already means the package root and adding
+ * the base again would name a part that is not there.
+ */
+export function partOfTarget(base: string, target: string): string {
+  if (target.startsWith("/")) {
+    return target.slice(1);
+  }
+  return `${base}/${target.replace(/^\.\//, "")}`;
+}
+
 /** `Id` → `Target`, which is what an `r:id` on a link or a picture resolves to. */
 export function relationshipsOf(xml: string): Map<string, string> {
   const found = new Map<string, string>();
@@ -646,7 +661,7 @@ class Extractor implements XmlHandler {
         this.blocks.push({
           kind: "image",
           alt: alt !== undefined && alt !== "" ? alt : "image",
-          ...(target ? { target: `word/${target.replace(/^\.?\//, "")}` } : {}),
+          ...(target ? { target: partOfTarget("word", target) } : {}),
         });
         return;
       }
