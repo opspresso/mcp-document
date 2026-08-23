@@ -203,3 +203,46 @@ test("a table too small to open at all writes nothing rather than half a table",
   assert.equal(written.text, "");
   assert.equal(written.complete, false);
 });
+
+test("an alt text that holds a bracket does not become a link to somewhere else", () => {
+  // Unescaped, an alt of `a](x) b` writes `![a](x) b](m.png)` — which reads
+  // back as a link to `x` followed by stray characters. The caption is gone and
+  // an address nobody wrote has appeared.
+  for (const alt of ["그림 [1] 조직도", "a](x) b", "**not bold", "a`b"]) {
+    const { text } = write([{ kind: "image", alt, target: "word/media/a.png" }]);
+    const [block] = parseMarkdown(text).blocks;
+    assert.equal(block?.kind, "paragraph", text);
+    if (block?.kind === "paragraph") {
+      assert.deepEqual(block.runs, [{ text: alt, href: "word/media/a.png" }], text);
+    }
+  }
+});
+
+test("a target that holds a bracket or a space is still the target", () => {
+  const { text } = write([{ kind: "image", alt: "x", target: "media/a (1).png" }]);
+  const [block] = parseMarkdown(text).blocks;
+  if (block?.kind === "paragraph") {
+    assert.equal(block.runs[0]?.href, "media/a (1).png", text);
+  }
+});
+
+test("a break's name is one line, because a heading is", () => {
+  // The name is the document's own string and may hold anything. A newline
+  // would put the rest of it in a paragraph between the boundary and what
+  // follows.
+  const { text } = write([{ kind: "break", unit: "sheet", index: 1, name: "1분기\n실적" }]);
+  assert.equal(text, "## 1분기 실적");
+  assert.equal(parseMarkdown(text).blocks.length, 1);
+});
+
+test("a code block's language is one word and no backticks", () => {
+  // `FENCE` captures `[^`\s]*`, and a backtick in the language closes the fence
+  // it was supposed to open.
+  const { text } = write([{ kind: "code", language: "```ts extra", text: "x" }]);
+  const [block] = parseMarkdown(text).blocks;
+  assert.equal(block?.kind, "code");
+  if (block?.kind === "code") {
+    assert.equal(block.language, "ts");
+    assert.equal(block.text, "x");
+  }
+});

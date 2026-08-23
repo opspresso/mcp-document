@@ -17,6 +17,8 @@
 
 import {
   escapeLineStart,
+  fenceLanguage,
+  renderImage,
   renderRuns,
   type Align,
   type ListItem,
@@ -57,11 +59,15 @@ const DIVIDERS: Record<Align, string> = {
  * name keeps both; a sheet that has none falls back to its number.
  */
 function breakLine(block: Extract<ReadBlock, { kind: "break" }>): string {
+  // A sheet's name is the document's own string, so it can hold a newline — and
+  // a heading is one line by definition: the rest would become a paragraph of
+  // its own, sitting between the boundary and what follows it.
+  const named = block.name === undefined ? undefined : oneLine([{ text: block.name }]);
   if (block.unit === "sheet") {
-    return `## ${block.name ?? `Sheet ${block.index}`}`;
+    return `## ${named === undefined || named === "" ? `Sheet ${block.index}` : named}`;
   }
   const unit = block.unit === "slide" ? "Slide" : "Section";
-  return `## ${unit} ${block.index}${block.name ? `: ${block.name}` : ""}`;
+  return `## ${unit} ${block.index}${named ? `: ${named}` : ""}`;
 }
 
 /**
@@ -92,7 +98,7 @@ function listLines(ordered: boolean, items: readonly ListItem[], start = 1): str
 function fenceBlock(text: string, language: string | undefined): string {
   const runs = [...text.matchAll(/^\s*(`{3,})/gm)].map((match) => match[1]!.length);
   const fence = "`".repeat(Math.max(3, Math.max(0, ...runs) + 1));
-  return `${fence}${language ?? ""}\n${text}\n${fence}`;
+  return `${fence}${language === undefined ? "" : fenceLanguage(language)}\n${text}\n${fence}`;
 }
 
 /**
@@ -227,10 +233,8 @@ function chunkOf(block: ReadBlock, budget: number): { text: string; rows?: numbe
       return { text: "---", complete: true };
     case "break":
       return { text: breakLine(block), complete: true };
-    case "image": {
-      const target = block.target ?? "";
-      return { text: `![${block.alt}](${target})`, complete: true };
-    }
+    case "image":
+      return { text: renderImage(block.alt, block.target ?? ""), complete: true };
     case "table": {
       const table = tableChunk(block, budget);
       return { text: table.text, rows: table.rows, complete: table.complete };
