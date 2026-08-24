@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { inspectXlsx, xlsxToText } from "../read/xlsx.js";
+import { readEntries } from "../zip.js";
+import { designFor } from "./theme.js";
 import { renderXlsx } from "./xlsx.js";
 
 const CREATED = "2026-08-23T00:00:00.000Z";
@@ -52,4 +54,19 @@ test("invalid and duplicate sheet names are refused before a file is built", () 
       ),
     /duplicated/,
   );
+});
+
+test("the header band is the design system's, not a colour typed into this file", () => {
+  // It was `FF1F4E78` — one digit off the palette entry it had been copied from,
+  // and the reason a renderer states no colour of its own.
+  const { headerFill, headerText } = designFor().table;
+  const { bytes } = renderXlsx([{ name: "Data", rows: [["a", "b"]] }], {
+    title: "표",
+    created: CREATED,
+  });
+
+  const styles = new TextDecoder().decode(readEntries(bytes, ["xl/styles.xml"]).get("xl/styles.xml"));
+
+  assert.match(styles, new RegExp(`<fgColor rgb="FF${headerFill}"/>`));
+  assert.match(styles, new RegExp(`<color rgb="FF${headerText}"/>`));
 });

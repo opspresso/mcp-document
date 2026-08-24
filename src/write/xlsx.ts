@@ -1,8 +1,20 @@
+/**
+ * Named rows and explicit formula cells to an XLSX workbook.
+ *
+ * The fifth renderer, and the one that used to be outside the design system:
+ * its header band was a hand-typed `FF1F4E78`, one digit off the palette entry
+ * it was copied from, which is the drift `theme.ts` exists to make impossible.
+ * A workbook has no `profile` argument — a grid carries no cover, no type scale
+ * and no card geometry to vary — so it reads the default design's own table
+ * treatment, which is the same pair the other four set a header row with.
+ */
+
 import { DocumentError } from "../errors.js";
 import { MAX_SPREADSHEET_CELLS, MAX_SPREADSHEET_ROWS } from "../limits.js";
 import { PRODUCER } from "../version.js";
 import { escapeXml } from "../xml.js";
 import { buildZip } from "../zip.js";
+import { designFor } from "./theme.js";
 
 export type SpreadsheetScalar = string | number | boolean | null;
 export type SpreadsheetCell = SpreadsheetScalar | { formula: string; cachedValue?: SpreadsheetScalar };
@@ -224,12 +236,18 @@ function workbookRelsXml(sheetCount: number): string {
   );
 }
 
+/** SpreadsheetML wants ARGB, and the palette states six digits. */
+function argb(hex: string): string {
+  return `FF${hex}`;
+}
+
 function stylesXml(): string {
+  const { headerFill, headerText } = designFor().table;
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-    '<fonts count="2"><font><sz val="11"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/></font></fonts>' +
-    '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+    `<fonts count="2"><font><sz val="11"/></font><font><b/><color rgb="${argb(headerText)}"/><sz val="11"/></font></fonts>` +
+    `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="${argb(headerFill)}"/><bgColor indexed="64"/></patternFill></fill></fills>` +
     '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
     '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>' +

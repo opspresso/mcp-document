@@ -38,6 +38,17 @@ of Markdown in, 12 assets totalling 6MB decoded, and `MAX_RENDERED_BYTES` on the
 way out — refused here with a sentence rather than cut by the caller's
 transport, where it would arrive as a parse failure.
 
+**The request body is weighed before it is read.** `MAX_SOURCE_BYTES` bounds a
+*document*, and it can only be applied once the whole request has been buffered
+and its base64 decoded — by which point a single-threaded process has already
+held whatever was sent. So `http.ts` reads `Content-Length` ahead of the
+transport and answers 413. It is the declared length, not a counted one:
+attaching a byte counter to the request stream would switch it into flowing mode
+and the transport builds its reader lazily, so the first chunks would be gone
+before it looked. A body that states no length — a chunked POST — is answered
+411 rather than read, and `http.test.ts` asserts that the SDK's own client still
+connects through the gate.
+
 **A bracket is not a link until something says it is.** `MAX_MARKDOWN_CHARS`
 was set against what a renderer holds in memory, and the parser was the real
 cost: half a million `[` with no `](` after them backtracked once per bracket
@@ -57,6 +68,14 @@ but never followed; VBA presence is reported but never executed. Hidden sheets
 require an explicit opt-in. Keep the deployment without outbound network
 access and run it with OS/process resource limits as defence in depth around
 third-party parsers and native office viewers used outside the request path.
+
+**A failure the caller did not cause says only that it failed.** A refusal
+written for the model — a format this does not read, an archive over the budget,
+a password — goes back verbatim, because it was composed to be read there.
+Anything else is a bug in this server, and its message is whatever the runtime
+happened to say: that is answered with one fixed sentence and an
+`INTERNAL_ERROR` code, and the runtime's own message goes to the process log,
+with the tool and the format beside it, where an operator will look for it.
 
 **Written filenames are sanitised.** They no longer compose a key — nothing is
 stored here — but the caller stores what it is told the file is called, and a

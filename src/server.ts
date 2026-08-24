@@ -12,62 +12,20 @@
  * served statelessly as before. Why that replaced a hand-written protocol is in
  * `mcp.ts`, beside the registration it replaced it with.
  *
- * What stays here is what the SDK has no opinion about: reading configuration,
- * the health probe, the shared-secret gate, and the routing between them.
+ * What is left here is the process: read the configuration, bind the listener
+ * `http.ts` builds, say which authentication mode it came up in, and close on a
+ * signal. Nothing in this file is importable without booting — which is why the
+ * routing is not in it.
  */
 
-import { createServer, type ServerResponse } from "node:http";
-import { createMcpHandler } from "@modelcontextprotocol/server";
-import { toNodeHandler } from "@modelcontextprotocol/node";
-import { authorizes, authorizesOrigin, describeAuth } from "./auth.js";
+import { createServer } from "node:http";
 import { ConfigError, loadConfig, type Config } from "./config.js";
-import { logError } from "./log.js";
-import { buildServer } from "./mcp.js";
+import { describeAuth } from "./auth.js";
+import { createRequestListener } from "./http.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 
-function send(response: ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body);
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(text);
-}
-
 function start(config: Config): void {
-  const mcp = toNodeHandler(
-    createMcpHandler(buildServer, { onerror: (error) => logError("mcp_handler_failed", error) }),
-  );
-  const server = createServer((request, response) => {
-    void (async () => {
-      // On the path alone: a probe or a proxy is free to append a query string,
-      // and matching the whole target turned `/health?x=1` into a 404.
-      const path = (request.url ?? "").split("?", 1)[0] ?? "";
-      if (path === "/health") {
-        send(response, 200, { status: "ok" });
-        return;
-      }
-      if (path !== "/mcp") {
-        send(response, 404, { error: "not found" });
-        return;
-      }
-      if (!authorizesOrigin(request.headers.origin)) {
-        send(response, 403, {
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32002, message: "browser origins are not allowed" },
-        });
-        return;
-      }
-      if (!authorizes(config.apiKey, request.headers.authorization)) {
-        response.setHeader("www-authenticate", 'Bearer realm="mcp"');
-        send(response, 401, {
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32001, message: "missing or invalid bearer token" },
-        });
-        return;
-      }
-      await mcp(request, response);
-    })();
-  });
+  const server = createServer(createRequestListener(config));
 
   server.listen(config.port, () => {
     console.log(`${SERVER_NAME} v${SERVER_VERSION} listening on :${config.port} (POST /mcp)`);
@@ -90,7 +48,7 @@ function start(config: Config): void {
 try {
   start(loadConfig());
 } catch (error) {
-  // Fail-fast, and loudly: a missing bucket name should stop a rollout at the
+  // Fail-fast, and loudly: a malformed PORT should stop a rollout at the
   // readiness probe rather than surface inside somebody's agent run later.
   if (error instanceof ConfigError) {
     console.error(`${SERVER_NAME}: ${error.message}`);

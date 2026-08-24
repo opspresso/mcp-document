@@ -377,32 +377,20 @@ function failureCode(error: unknown): string {
 }
 
 /**
- * The origin, and nothing else.
+ * What a failure that was *not* written for the caller is allowed to say.
  *
- * A URL the model read out of another tool's output can carry its capability in
- * the URL itself — a signed query string, or a secret path segment as a Slack
- * webhook does. A log line is the last place either should come to rest, and
- * the question this line answers — "everything to that host started failing on
- * Tuesday" — is asked about the host.
+ * `errors.ts` draws the line: a `DocumentError`'s message goes back verbatim
+ * because it was composed to be read by a model, and anything else is a bug in
+ * this server whose message is whatever the runtime happened to say. Passing
+ * that through taught the model nothing — "Cannot read properties of undefined"
+ * is not a thing to react to — and carried a stack-shaped string about this
+ * process out to the caller. The detail is not lost: `logError` writes it, with
+ * the tool and the format beside it, which is where an operator looks.
  */
-function originOf(url: string | undefined): string {
-  if (!url) {
-    return "(inline content)";
-  }
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "(unparseable url)";
-  }
-}
+const INTERNAL = "the server failed while handling it; the operator's logs carry the detail";
 
-function describe(error: unknown): string {
-  if (error instanceof Error) {
-    return error.name === "TimeoutError" || error.name === "AbortError"
-      ? "the request timed out"
-      : error.message;
-  }
-  return String(error);
+function reason(error: unknown): string {
+  return error instanceof DocumentError ? error.message : INTERNAL;
 }
 
 async function read(args: Record<string, unknown>): Promise<ToolResult> {
@@ -427,9 +415,7 @@ async function read(args: Record<string, unknown>): Promise<ToolResult> {
       filename,
     });
     return failed(
-      `Error: could not read the document — ${
-        error instanceof DocumentError ? error.message : describe(error)
-      }`,
+      `Error: could not read the document — ${reason(error)}`,
       {
         operation: "read_document",
         code: failureCode(error),
@@ -504,9 +490,7 @@ async function inspectDocument(args: Record<string, unknown>): Promise<ToolResul
       filename,
     });
     return failed(
-      `Error: could not inspect the document — ${
-        error instanceof DocumentError ? error.message : describe(error)
-      }`,
+      `Error: could not inspect the document — ${reason(error)}`,
       {
         operation: "inspect_document",
         code: failureCode(error),
@@ -530,6 +514,17 @@ function inspectedLine(cell: InspectedCell, mode: InspectionMode): string | unde
     : `${cell.address}: ${cell.value}`;
 }
 
+/**
+ * The inspected cells as lines, inside the character budget.
+ *
+ * **Two budgets, and only one of them stops this loop.** `inspection.complete`
+ * is the *parser's* verdict — it went as far as `MAX_INSPECTED_CELLS` let it —
+ * and reading it as a reason to stop writing dropped every sheet after the
+ * first: a workbook whose cell budget ran out on sheet three came back holding
+ * sheet one, with tens of thousands of characters of text budget unspent and
+ * nothing saying the other two had been read. What this loop may stop for is
+ * its own budget, and the parser's verdict is carried into the answer instead.
+ */
 function formatInspection(
   inspection: XlsxInspection,
   mode: InspectionMode,
@@ -537,11 +532,11 @@ function formatInspection(
   const lines: string[] = [];
   const sheets: Array<{ name: string; state: string; cells: InspectedCell[] }> = [];
   let length = 0;
-  let complete = inspection.complete;
+  let cut = false;
   for (const sheet of inspection.sheets) {
     const heading = `## ${sheet.name}${sheet.state === "visible" ? "" : ` [${sheet.state}]`}`;
     if (length + heading.length + 1 > MAX_TEXT_CHARS) {
-      complete = false;
+      cut = true;
       break;
     }
     lines.push(heading);
@@ -553,7 +548,7 @@ function formatInspection(
         continue;
       }
       if (length + line.length + 1 > MAX_TEXT_CHARS) {
-        complete = false;
+        cut = true;
         break;
       }
       lines.push(line);
@@ -563,11 +558,11 @@ function formatInspection(
     sheets.push({ name: sheet.name, state: sheet.state, cells });
     lines.push("");
     length += 1;
-    if (!complete) {
+    if (cut) {
       break;
     }
   }
-  return { text: lines.join("\n").trim(), sheets, complete };
+  return { text: lines.join("\n").trim(), sheets, complete: inspection.complete && !cut };
 }
 
 async function inspectSpreadsheet(args: Record<string, unknown>): Promise<ToolResult> {
@@ -631,9 +626,7 @@ async function inspectSpreadsheet(args: Record<string, unknown>): Promise<ToolRe
       filename,
     });
     return failed(
-      `Error: could not inspect the workbook — ${
-        error instanceof DocumentError ? error.message : describe(error)
-      }`,
+      `Error: could not inspect the workbook — ${reason(error)}`,
       {
         operation: "inspect_spreadsheet",
         code: failureCode(error),
@@ -713,9 +706,7 @@ async function renderSpreadsheet(args: Record<string, unknown>): Promise<ToolRes
       tool: "render_spreadsheet",
     });
     return failed(
-      `Error: could not write the workbook — ${
-        error instanceof DocumentError ? error.message : describe(error)
-      }`,
+      `Error: could not write the workbook — ${reason(error)}`,
       {
         operation: "render_spreadsheet",
         code: failureCode(error),
@@ -811,9 +802,7 @@ async function render(args: Record<string, unknown>): Promise<ToolResult> {
       format,
     });
     return failed(
-      `Error: could not write the document — ${
-        error instanceof DocumentError ? error.message : describe(error)
-      }`,
+      `Error: could not write the document — ${reason(error)}`,
       {
         operation: "render_document",
         code: failureCode(error),

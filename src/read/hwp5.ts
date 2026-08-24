@@ -1,5 +1,5 @@
 /**
- * HWP 5.0 to text.
+ * HWP 5.0 to what a model should read.
  *
  * The file is an OLE compound document. `FileHeader` states the version and a
  * flag word; the body is one deflate stream per `BodyText/SectionN`; and inside
@@ -23,21 +23,18 @@
 import { inflateRawSync } from "node:zlib";
 import CFB from "cfb";
 import { MAX_EXPANDED_BYTES } from "../limits.js";
-import { MAX_TEXT_CHARS } from "../limits.js";
 import type { ReadBlock } from "./blocks.js";
 import { collapseRuns } from "./lines.js";
-import { blocksToMarkdown } from "./serialize.js";
 import { DocumentError } from "../errors.js";
 
 export class HwpError extends DocumentError {}
 
-export interface HwpText {
-  text: string;
+export interface HwpBlocks {
+  blocks: ReadBlock[];
   /** How many body sections contributed. */
   sections: number;
   /** The version the file declares, e.g. "5.0.3.0". */
   version: string;
-  blocks: ReadBlock[];
   observed: string[];
 }
 
@@ -147,7 +144,7 @@ export function paragraphRecordsOf(section: Uint8Array): HwpParagraph[] {
       size = view.getUint32(offset, true);
       offset += 4;
     }
-    if (size < 0 || offset + size > section.byteLength) {
+    if (offset + size > section.byteLength) {
       // A record that claims more than is left is the end of what can be read.
       // Stopping keeps the paragraphs already recovered, which is the answer.
       break;
@@ -221,7 +218,15 @@ function inflate(stream: Uint8Array, compressed: boolean, what: string): Uint8Ar
   }
 }
 
-export function hwpToText(bytes: Uint8Array): HwpText {
+/**
+ * The blocks one HWP holds, never the text.
+ *
+ * The serializing belongs to `document.ts`, with every other format's: a reader
+ * that wrote its own text here had to discard what `blocksToMarkdown` reports
+ * about the cut, so a 200,000-character document came back at the 90,000-
+ * character budget claiming to be all of it.
+ */
+export function hwpToBlocks(bytes: Uint8Array): HwpBlocks {
   const streams = streamsOf(bytes);
   const header = streams.get(FILE_HEADER);
   if (!header || header.byteLength < 40) {
@@ -277,12 +282,11 @@ export function hwpToText(bytes: Uint8Array): HwpText {
       }
     }
   }
-  const text = blocksToMarkdown(blocks, MAX_TEXT_CHARS).text;
-  if (text === "") {
+  if (blocks.length === 0) {
     throw new HwpError(
       `this .hwp has ${paths.length} section(s) but no text in any of them — its content is most ` +
         "likely images, which need OCR rather than text extraction",
     );
   }
-  return { text, sections: paths.length, version, blocks, observed: [...observed] };
+  return { blocks, sections: paths.length, version, observed: [...observed] };
 }

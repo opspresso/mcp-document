@@ -128,6 +128,25 @@ test("the bold face is embedded only when something is bold", async () => {
   );
 });
 
+test("bold inside a directive still embeds the bold face", async () => {
+  // A `:::` fence has no treatment on a page, so its contents are rendered
+  // where it stood — and the walk that decides whether to embed the bold face
+  // did not look inside one. Everything this renderer bolds came out at body
+  // weight, silently: the text extracts perfectly and only looks wrong.
+  const cards = "# 제목\n\n:::cards\n\n### 하나\n\n**굵게** 쓴 문장.\n\n### 둘\n\n짧은 설명.\n\n:::";
+  assert.ok(usesBold(parseMarkdown(":::cards\n\n### 하나\n\n짧은 설명.\n\n:::")));
+  assert.ok(usesBold(parseMarkdown(":::metrics\n\n- **99.9%** 가용성\n\n:::")));
+  assert.equal(usesBold(parseMarkdown(":::cards\n\n본문뿐인 문단.\n\n:::")), false);
+
+  const plain = await renderPdf(parseMarkdown("본문뿐인 문서"), { title: "t", created: CREATED });
+  const directive = await renderPdf(parseMarkdown(cards), { title: "t", created: CREATED });
+
+  assert.ok(
+    directive.bytes.byteLength > plain.bytes.byteLength * 1.5,
+    "a heading inside a directive should still carry a second face",
+  );
+});
+
 test("a long Korean paragraph wraps instead of running off the page", async () => {
   // Korean prose has no spaces to break at, so a breaker that waits for one
   // produces a single line the width of the document.

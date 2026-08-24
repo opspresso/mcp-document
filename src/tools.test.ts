@@ -23,6 +23,7 @@ import {
   XLSX_CONTENT_TYPE,
 } from "./tools.js";
 import { renderDocx } from "./write/docx.js";
+import { renderXlsx } from "./write/xlsx.js";
 import { buildZip } from "./zip.js";
 
 async function call(
@@ -159,6 +160,39 @@ test("spreadsheet inspection returns addressed formulas without executing hidden
   assert.doesNotMatch(result.text, /secret/);
   assert.equal(result.structured?.hiddenSheets, 1);
   assert.equal(result.structured?.complete, true);
+});
+
+test("a workbook past the cell budget keeps every sheet the parser reached", async () => {
+  // The cell budget is 10,000 and stops the *parser*; reading that as a reason
+  // to stop *writing* dropped every sheet after the first — half the inspected
+  // cells thrown away with 30,000 characters of text budget unspent, and
+  // nothing in the answer saying the second sheet had been read at all.
+  const half = Array.from({ length: 500 }, (_, row) =>
+    Array.from({ length: 10 }, (_, column) => `${row}-${column}`),
+  );
+  const { bytes } = renderXlsx(
+    [
+      { name: "First", rows: half },
+      { name: "Second", rows: half },
+      { name: "Third", rows: [["never", "reached"]] },
+    ],
+    { title: "big", created: "2026-01-01T00:00:00.000Z" },
+  );
+
+  const result = await call("inspect_spreadsheet", { content: base64(bytes), mode: "values" });
+
+  assert.equal(result.isError, false, result.text);
+  assert.match(result.text, /## First/);
+  assert.match(result.text, /## Second/);
+  const sheets = result.structured?.sheets as Array<{ name: string; cells: unknown[] }>;
+  assert.deepEqual(sheets.map((sheet) => sheet.name), ["First", "Second"]);
+  assert.equal(sheets[0]?.cells.length, 500 * 10);
+  // The character budget is what stops it now, part-way through the second
+  // sheet — which is a cut this answer describes, not a sheet it never mentions.
+  assert.ok((sheets[1]?.cells.length ?? 0) > 0);
+  // The third sheet was never inspected, so the answer still says it is partial.
+  assert.equal(result.structured?.complete, false);
+  assert.equal(result.structured?.totalSheets, 3);
 });
 
 test("a spreadsheet is created with explicit formulas and machine-readable validation", async () => {

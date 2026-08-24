@@ -20,8 +20,6 @@ export interface DocumentSource {
   bytes: Uint8Array;
   /** Declared media type, lower-cased. Empty when nothing declared one. */
   mimeType: string;
-  /** Charset the caller declared, when it declared one. */
-  charset?: string;
   /** What the provenance header names as the origin of this text. */
   label: string;
   /** Filename, for the extension hint the detector may need. */
