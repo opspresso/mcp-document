@@ -230,3 +230,24 @@ test("only an unambiguous format is read as a date", () => {
     [],
   );
 });
+
+test("a cell that states no address lands in the next column, not in the first", () => {
+  // `@r` is optional, and the inspection pass keeps no rows — so the fallback
+  // that read the next column off the row it was building stayed at zero, and
+  // every unaddressed cell in a row was reported at column A.
+  const bytes = oneSheet(
+    '<row r="1">' +
+      '<c t="inlineStr"><is><t>a</t></is></c>' +
+      '<c t="inlineStr"><is><t>b</t></is></c>' +
+      '<c r="D1" t="inlineStr"><is><t>d</t></is></c>' +
+      '<c t="inlineStr"><is><t>e</t></is></c>' +
+      "</row>",
+  );
+
+  assert.deepEqual(
+    inspectXlsx(bytes).sheets[0]!.cells.map((cell) => `${cell.address}=${cell.value}`),
+    ["A1=a", "B1=b", "D1=d", "E1=e"],
+  );
+  // The text path already placed them; the two now agree.
+  assert.match(xlsxToText(bytes, 9_000).text, /a \| b \|  \| d \| e/);
+});

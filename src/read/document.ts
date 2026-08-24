@@ -11,11 +11,12 @@
  * success: an empty string reads as "the document is empty", which is a
  * different and much more damaging claim than "I could not read it".
  *
- * **The cut is the serializer's, not this file's.** `truncateText` slices a
- * finished string, and against GFM that is unsafe — a table cut between its
- * header and its divider is not a table any more. `blocksToMarkdown` spends
- * the budget on block boundaries and, inside a table, on row boundaries;
- * `fit()` stays for the one reader that budgets in its own units.
+ * **The cut is the serializer's, not this file's.** Slicing a finished string
+ * is unsafe against GFM — a table cut between its header and its divider is not
+ * a table any more — so `blocksToMarkdown` spends the budget on block
+ * boundaries and, inside a table, on row boundaries, and reports what did not
+ * fit. Every block reader goes through `wrote()`; XLSX is the one exception,
+ * because a worksheet budgets in whole rows of its own.
  *
  * **`omissions` is static plus observed.** The per-format list says what this
  * reader never looks at; `observed` says what *this document* actually lost —
@@ -26,12 +27,12 @@
  */
 
 import { detect, type Format } from "../detect.js";
-import { MAX_TEXT_CHARS, truncateText } from "../limits.js";
+import { MAX_TEXT_CHARS } from "../limits.js";
 import type { DocumentSource } from "../source.js";
 import { DocumentError } from "../errors.js";
 import type { ReadBlock } from "./blocks.js";
 import { docxToBlocks } from "./docx.js";
-import { hwpToText } from "./hwp5.js";
+import { hwpToBlocks } from "./hwp5.js";
 import { hwpxToBlocks } from "./hwpx.js";
 import { odfToBlocks } from "./odf.js";
 import { pptxToBlocks } from "./pptx.js";
@@ -62,22 +63,6 @@ export interface ReadBlocks {
   /** Counts in the format's own units. */
   counts?: Record<string, number>;
   omissions: string[];
-}
-
-/**
- * Cut to the budget, and say which of the two things happened.
- *
- * `whole` is the note for a document that fitted — it is not "nothing to say":
- * the formats that leave parts out (DOCX's headers, a section list) have to say
- * so on the successful path, because that is the path where nobody is looking
- * for a caveat.
- */
-function fit(text: string, whole?: string): { text: string; note?: string; complete: boolean } {
-  const cut = truncateText(text, MAX_TEXT_CHARS);
-  if (cut.note) {
-    return { ...cut, complete: false };
-  }
-  return whole ? { text: cut.text, note: whole, complete: true } : { text: cut.text, complete: true };
 }
 
 /**
@@ -240,15 +225,20 @@ export async function readDocument(source: DocumentSource): Promise<ReadResult> 
     };
   }
 
-  const { text, sections, version, blocks, observed } = hwpToText(source.bytes);
+  const { blocks, sections, version, observed } = hwpToBlocks(source.bytes);
+  const written = wrote(
+    blocks,
+    `all ${sections} section(s) of an HWP ${version} document`,
+    `${sections} section(s)`,
+  );
   return {
     format,
-    ...fit(text, `all ${sections} section(s) of an HWP ${version} document`),
+    ...written,
     // The record layouts that would give a level or a cell are unverified
     // against the HWP 5.0 spec, and a wrong field offset resolves to a real
     // shape and answers confidently with the wrong one.
     omissions: ["heading levels", "list markers", "table structure", ...observed],
-    counts: { sections, blocks: blocks.length, totalBlocks: blocks.length },
+    counts: { ...written.counts, sections },
   };
 }
 
@@ -297,6 +287,6 @@ export async function readBlocks(source: DocumentSource): Promise<ReadBlocks> {
     const { blocks, observed } = rtfToBlocks(source.bytes);
     return { blocks, format, omissions: observed };
   }
-  const { blocks, sections, observed } = hwpToText(source.bytes);
+  const { blocks, sections, observed } = hwpToBlocks(source.bytes);
   return { blocks, format, counts: { sections }, omissions: observed };
 }

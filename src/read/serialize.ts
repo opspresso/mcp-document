@@ -6,13 +6,13 @@
  * inline grammar — escaping, emphasis, code fences, link targets — stays in
  * `markdown.ts`, where it is tested against the parser it has to invert.
  *
- * **The cut happens here, not in `document.ts`.** `truncateText` slices a
- * finished string, and against GFM that is unsafe: a table cut between its
- * header and its divider is not a table any more, and a row cut in half is a
- * row whose columns no longer line up — which is exactly the failure the
- * spreadsheet reader spends a budget in whole rows to avoid. So the budget is
- * spent on block boundaries, and inside a table on row boundaries, and what did
- * not fit is reported rather than left to be noticed.
+ * **The cut happens here, not in `document.ts`.** Slicing a finished string is
+ * unsafe against GFM: a table cut between its header and its divider is not a
+ * table any more, and a row cut in half is a row whose columns no longer line
+ * up — which is exactly the failure the spreadsheet reader spends a budget in
+ * whole rows to avoid. So the budget is spent on block boundaries, and inside a
+ * table on row boundaries, and what did not fit is reported rather than left to
+ * be noticed.
  */
 
 import {

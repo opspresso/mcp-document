@@ -88,18 +88,6 @@ export const MAX_REPEATED_COLUMNS = 256;
 export const MAX_INSPECTED_BLOCKS = 500;
 export const MAX_BLOCK_PREVIEW_CHARS = 120;
 
-export function truncateText(text: string, maxChars: number): { text: string; note?: string } {
-  if (text.length <= maxChars) {
-    return { text };
-  }
-  return {
-    text: text.slice(0, maxChars),
-    note:
-      `the first ${maxChars.toLocaleString("en-US")} of ` +
-      `${text.length.toLocaleString("en-US")} characters`,
-  };
-}
-
 /**
  * Extracted text is data, and it comes from a document the *model* chose.
  *

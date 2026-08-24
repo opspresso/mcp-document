@@ -49,7 +49,7 @@ import {
   type RGB,
 } from "pdf-lib";
 import type { Block, MarkdownDocument, Run } from "../markdown.js";
-import { plainTextOf } from "../markdown.js";
+import { plainTextOf, withoutDirectives } from "../markdown.js";
 import { columnShares } from "./table.js";
 import {
   HANGUL,
@@ -851,9 +851,17 @@ export interface RenderedPdf {
  * font weight of a plain document. Headings and table headers are bolded by
  * this renderer rather than by the parser, so they count here even though no
  * run in them says so.
+ *
+ * **Over the blocks the renderer draws, not the ones the parser returned.** A
+ * `:::cards` fence has no treatment on a page, so `block()` renders its
+ * contents where the fence stood — and this walk did not look inside one. A
+ * document whose headings or `**bold**` all sat in a directive answered `false`
+ * here, so no bold face was embedded, `fontFor` fell back to the regular one,
+ * and every heading in the file came out at body weight. Nothing errors and the
+ * text extracts perfectly; it is only wrong to look at.
  */
 export function usesBold(document: MarkdownDocument): boolean {
-  return document.blocks.some(
+  return withoutDirectives(document).blocks.some(
     (block) =>
       block.kind === "heading" ||
       block.kind === "table" ||

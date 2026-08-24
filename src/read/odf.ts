@@ -320,7 +320,11 @@ class Extractor implements XmlHandler {
         return;
       }
       case "frame":
-        this.frameLabel = attributeOf(attributes, "draw:name");
+        // A self-closing `<draw:frame/>` gets no `close`, so its name would
+        // stay set for the rest of the part and be worn by the next picture as
+        // if it were that picture's caption. The same guard `w:t` and `w:pPr`
+        // carry on the DOCX side.
+        this.frameLabel = selfClosing ? undefined : attributeOf(attributes, "draw:name");
         return;
       case "image": {
         if (this.skipDepth > 0) {

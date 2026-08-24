@@ -213,6 +213,16 @@ class Sheet implements XmlHandler {
   private readonly inspected: InspectedCell[] = [];
   private cells: string[] = [];
   private column = 0;
+  /**
+   * Where a cell with no `@r` sits.
+   *
+   * Tracked here rather than read off `cells.length`, which is only the next
+   * free column when rows are being kept. The inspection pass keeps none, so
+   * that fallback stayed at zero and every unaddressed cell in a row was
+   * reported at column A — three values at `A1`, from the one tool whose whole
+   * contract is the address a value sits at.
+   */
+  private nextColumn = 0;
   private row = 0;
   private address = "";
   private type = "";
@@ -250,6 +260,7 @@ class Sheet implements XmlHandler {
     switch (localName(name)) {
       case "row":
         this.cells = [];
+        this.nextColumn = 0;
         this.row = Number(attributeOf(attributes, "r")) || this.rowCount + 1;
         return;
       case "c": {
@@ -265,7 +276,8 @@ class Sheet implements XmlHandler {
         const reference = attributeOf(attributes, "r");
         // Absent addresses mean "the next column", which is what a writer that
         // omits them intends.
-        this.column = reference ? columnOf(reference) : this.cells.length;
+        this.column = reference ? columnOf(reference) : this.nextColumn;
+        this.nextColumn = this.column + 1;
         this.address = reference ?? `${columnName(this.column)}${this.row}`;
         this.buffer = "";
         this.formula = "";

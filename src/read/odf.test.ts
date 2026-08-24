@@ -298,3 +298,26 @@ test("a spanning cell says how far it reaches", () => {
     assert.equal(table.rows[0]?.cells[0]?.colspan, 2);
   }
 });
+
+test("a self-closing frame does not lend its name to the next picture", () => {
+  // `<draw:frame/>` gets no close event, so the name it declared used to stay
+  // set — and the next picture was captioned with somebody else's alt text.
+  const { blocks } = contentXmlToBlocks(
+    '<office:body><office:text>' +
+      '<draw:frame draw:name="빈 자리"/>' +
+      '<text:p><draw:image xlink:href="Pictures/a.png"/></text:p>' +
+      "</office:text></office:body>",
+    "text",
+  );
+
+  const image = blocks.find((block) => block.kind === "image");
+  assert.equal(image?.kind === "image" ? image.alt : undefined, "image");
+  // A frame that does close still names the picture inside it.
+  const named = contentXmlToBlocks(
+    '<office:body><office:text>' +
+      '<draw:frame draw:name="조직도"><draw:image xlink:href="Pictures/b.png"/></draw:frame>' +
+      "</office:text></office:body>",
+    "text",
+  ).blocks.find((block) => block.kind === "image");
+  assert.equal(named?.kind === "image" ? named.alt : undefined, "조직도");
+});
