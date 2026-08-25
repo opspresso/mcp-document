@@ -23,5 +23,7 @@ COPY assets ./assets
 # root buys — and this process exists to parse bytes chosen by a model.
 USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 # exec form: node is PID 1 so SIGTERM reaches it on a rolling deploy
 CMD ["node", "dist/server.js"]
