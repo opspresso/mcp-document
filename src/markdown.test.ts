@@ -94,6 +94,17 @@ test("an unclosed fence takes the rest of the document, which is what it says", 
   assert.deepEqual(parsed[1], { kind: "code", text: "never closed\nstill code" });
 });
 
+test("closing code fences contain only a matching marker and optional whitespace", () => {
+  const source = "```txt\n```not a close\n    ```\ncontent\n````\nafter";
+  assert.deepEqual(blocks(source), [
+    { kind: "code", language: "txt", text: "```not a close\n    ```\ncontent" },
+    { kind: "paragraph", runs: [{ text: "after" }] },
+  ]);
+  assert.deepEqual(blocks("~~~~\n~~~\n```\nbody\n  ~~~~~ \t"), [
+    { kind: "code", text: "~~~\n```\nbody" },
+  ]);
+});
+
 test("bullets and numbers are separate lists, and indentation is depth", () => {
   const parsed = blocks("- one\n  - nested\n- two\n\n1. first\n2. second");
   assert.deepEqual(parsed[0], {

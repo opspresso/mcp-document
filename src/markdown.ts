@@ -329,9 +329,10 @@ export function parseMarkdown(source: string, depth = 0): MarkdownDocument {
     const fence = FENCE.exec(line);
     if (fence) {
       const marker = fence[1]!;
+      const closing = new RegExp(`^ {0,3}${marker[0]}{${marker.length},}[ \\t]*$`);
       index += 1;
       const body: string[] = [];
-      while (index < lines.length && !lines[index]!.trimStart().startsWith(marker)) {
+      while (index < lines.length && !closing.test(lines[index]!)) {
         body.push(lines[index]!);
         index += 1;
       }
