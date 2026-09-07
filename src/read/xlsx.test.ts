@@ -67,6 +67,33 @@ test("a shared string is resolved to its text, not left as an index", () => {
   assert.equal(read(bytes).text, "## Sheet1\n이름 | 부서");
 });
 
+test("empty shared-string items preserve the indexes of later values", () => {
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(workbook("Sheet1")),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/sharedStrings.xml": utf8('<sst><si/><si><t>second</t></si></sst>'),
+    "xl/worksheets/sheet1.xml": utf8(sheet(
+      '<row><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row>',
+    )),
+  });
+  assert.deepEqual(inspectXlsx(bytes).sheets[0]!.cells.map((cell) => cell.value), ["", "second"]);
+});
+
+test("phonetic guides are not appended to shared or inline string values", () => {
+  const rich = '<r><t>東京</t></r><rPh sb="0" eb="2"><t>とうきょう</t></rPh>';
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(workbook("Sheet1")),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/sharedStrings.xml": utf8(`<sst><si>${rich}</si><si><t>after</t></si></sst>`),
+    "xl/worksheets/sheet1.xml": utf8(sheet(
+      `<row><c t="s"><v>0</v></c><c t="inlineStr"><is>${rich}</is></c>` +
+      '<c t="s"><v>1</v></c></row>',
+    )),
+  });
+  assert.equal(read(bytes).text, "## Sheet1\n東京 | 東京 | after");
+  assert.deepEqual(inspectXlsx(bytes).sheets[0]!.cells.map((cell) => cell.value), ["東京", "東京", "after"]);
+});
+
 test("the stored value comes back, never the formula that made it", () => {
   // `=SUM(B2:B9)` is how the number was made; the number is the answer.
   const bytes = oneSheet(`<row r="1"><c r="A1"><f>SUM(B2:B9)</f><v>42</v></c></row>`);

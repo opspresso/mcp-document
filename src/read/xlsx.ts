@@ -168,18 +168,28 @@ class SharedStrings implements XmlHandler {
   private buffer = "";
   private textDepth = 0;
   private inItem = false;
+  private phoneticDepth = 0;
 
   text(value: string): void {
-    if (this.textDepth > 0) {
+    if (this.textDepth > 0 && this.phoneticDepth === 0) {
       this.buffer += value;
     }
   }
 
   open(name: string, _attributes: string, selfClosing: boolean): void {
     const local = localName(name);
+    if (local === "rPh" || this.phoneticDepth > 0) {
+      if (!selfClosing) {
+        this.phoneticDepth += 1;
+      }
+      return;
+    }
     if (local === "si") {
-      this.inItem = true;
+      this.inItem = !selfClosing;
       this.buffer = "";
+      if (selfClosing) {
+        this.values.push("");
+      }
       return;
     }
     // A single `si` can hold several runs, each with its own `t`; they
@@ -190,6 +200,10 @@ class SharedStrings implements XmlHandler {
   }
 
   close(name: string): void {
+    if (this.phoneticDepth > 0) {
+      this.phoneticDepth -= 1;
+      return;
+    }
     const local = localName(name);
     if (local === "t" && this.textDepth > 0) {
       this.textDepth -= 1;
@@ -237,6 +251,7 @@ class Sheet implements XmlHandler {
   private cellCount = 0;
   private rowCount = 0;
   private inspectionComplete = true;
+  private phoneticDepth = 0;
 
   constructor(
     private readonly shared: readonly string[],
@@ -248,6 +263,9 @@ class Sheet implements XmlHandler {
   ) {}
 
   text(value: string): void {
+    if (this.phoneticDepth > 0) {
+      return;
+    }
     if (this.capturing) {
       this.buffer += value;
     }
@@ -257,6 +275,12 @@ class Sheet implements XmlHandler {
   }
 
   open(name: string, attributes: string, selfClosing: boolean): void {
+    if (localName(name) === "rPh" || this.phoneticDepth > 0) {
+      if (!selfClosing) {
+        this.phoneticDepth += 1;
+      }
+      return;
+    }
     switch (localName(name)) {
       case "row":
         this.cells = [];
@@ -308,6 +332,10 @@ class Sheet implements XmlHandler {
   }
 
   close(name: string): void {
+    if (this.phoneticDepth > 0) {
+      this.phoneticDepth -= 1;
+      return;
+    }
     switch (localName(name)) {
       case "v":
       case "t":
