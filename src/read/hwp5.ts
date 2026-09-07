@@ -139,20 +139,21 @@ export function paragraphRecordsOf(section: Uint8Array): HwpParagraph[] {
     offset += 4;
     if (size === 0xfff) {
       if (offset + 4 > section.byteLength) {
-        break;
+        throw new HwpError("the HWP body ends inside an extended record length");
       }
       size = view.getUint32(offset, true);
       offset += 4;
     }
     if (offset + size > section.byteLength) {
-      // A record that claims more than is left is the end of what can be read.
-      // Stopping keeps the paragraphs already recovered, which is the answer.
-      break;
+      throw new HwpError("the HWP body ends inside a record payload");
     }
     if (tag === HWPTAG_PARA_TEXT) {
       paragraphs.push({ text: decodeParaText(section.subarray(offset, offset + size)), level });
     }
     offset += size;
+  }
+  if (offset !== section.byteLength) {
+    throw new HwpError("the HWP body ends inside a record header");
   }
   return paragraphs;
 }

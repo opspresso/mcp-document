@@ -131,3 +131,7 @@ The 97-2003 formats are deliberately absent. They are OLE record streams, not
 containers — `.doc` scatters its text through a piece table, `.xls` is a BIFF
 stream — and a half-right parse of either produces something that *looks* like
 text. That failure is worse than the refusal.
+
+An HWP body with a truncated record header, extended length or payload is
+refused. Returning its readable prefix as a complete document would conceal
+the missing content.

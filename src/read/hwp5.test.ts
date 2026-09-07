@@ -12,7 +12,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { decodeParaText, paragraphsOf, sectionsOf } from "./hwp5.js";
+import { decodeParaText, paragraphsOf, sectionsOf, HwpError } from "./hwp5.js";
 
 const HWPTAG_PARA_HEADER = 0x010 + 50;
 const HWPTAG_PARA_TEXT = 0x010 + 51;
@@ -103,15 +103,19 @@ test("a paragraph past 4,095 bytes carries its size in the following word", () =
   assert.deepEqual(paragraphsOf(section), [long]);
 });
 
-test("a record claiming more than is left ends the walk, keeping what was read", () => {
+test("a truncated record is refused instead of reporting a complete partial body", () => {
   const good = record(HWPTAG_PARA_TEXT, units(...chars("kept")));
   const truncated = record(HWPTAG_PARA_TEXT, units(...chars("lost"))).subarray(0, 6);
-  assert.deepEqual(paragraphsOf(Buffer.concat([good, truncated])), ["kept"]);
+  assert.throws(() => paragraphsOf(Buffer.concat([good, truncated])), HwpError);
+  assert.throws(() => paragraphsOf(Buffer.concat([good, Uint8Array.from([1, 2])])), HwpError);
+  const extended = new Uint8Array(4);
+  new DataView(extended.buffer).setUint32(0, 0xfff00043, true);
+  assert.throws(() => paragraphsOf(extended), HwpError);
 });
 
 test("an empty section yields nothing rather than throwing", () => {
   assert.deepEqual(paragraphsOf(new Uint8Array(0)), []);
-  assert.deepEqual(paragraphsOf(Uint8Array.from([1, 2])), []);
+  assert.throws(() => paragraphsOf(Uint8Array.from([1, 2])), HwpError);
 });
 
 test("sections are ordered by their number, not by their name", () => {
