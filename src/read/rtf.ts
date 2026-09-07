@@ -322,6 +322,7 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
    * the `t` gone.
    */
   let fallbackUnits = 1;
+  const savedFallback: number[] = [];
 
   const emit = (value: string): void => {
     if (skipDepth !== -1) {
@@ -329,7 +330,7 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
     }
     if (skipUnits > 0) {
       // The fallback for a Unicode character this reader already took.
-      skipUnits -= value.length;
+      skipUnits -= 1;
       return;
     }
     reader.emit(value);
@@ -339,11 +340,15 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
     const character = source[index]!;
 
     if (character === "{") {
+      skipUnits = 0;
+      savedFallback.push(fallbackUnits);
       depth += 1;
       reader.save();
       continue;
     }
     if (character === "}") {
+      skipUnits = 0;
+      fallbackUnits = savedFallback.pop() ?? 1;
       if (skipDepth !== -1 && depth <= skipDepth) {
         skipDepth = -1;
       }
@@ -382,11 +387,16 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       continue;
     }
     if (next === "*") {
+      if (skipDepth === -1 && skipUnits > 0) {
+        skipUnits -= 1;
+        index += 1;
+        continue;
+      }
       // `{\*\name ...}` — ignorable whatever `name` turns out to be, with one
       // exception: `\*\shppict` wraps the picture a reader should say was
       // there. Skipping the group is still right; announcing it first is what
       // keeps a figure from vanishing without a trace.
-      if (/^\\\*\\shppict\b/.test(source.slice(index, index + 11))) {
+      if (skipDepth === -1 && /^\\\*\\shppict\b/.test(source.slice(index, index + 11))) {
         reader.picture();
       }
       if (skipDepth === -1) {
@@ -400,6 +410,8 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
     if (!match) {
       if (Object.hasOwn(LITERALS, next)) {
         emit(LITERALS[next]!);
+      } else if (skipDepth === -1 && skipUnits > 0) {
+        skipUnits -= 1;
       }
       index += 1;
       continue;
@@ -408,7 +420,23 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
     const parameter = match[2];
     index += match[0].length;
 
+    // Binary data is opaque even inside a destination being skipped.
+    if (word === "bin") {
+      const count = Number(parameter);
+      if (!Number.isSafeInteger(count) || count < 0 || count > source.length - index - 1) {
+        throw new RtfError("the binary data length exceeds the remaining RTF input or is invalid");
+      }
+      index += count;
+      if (skipDepth === -1 && skipUnits > 0) {
+        skipUnits -= 1;
+      }
+      continue;
+    }
     if (skipDepth !== -1) {
+      continue;
+    }
+    if (skipUnits > 0) {
+      skipUnits -= 1;
       continue;
     }
     if (word === "uc" && parameter !== undefined) {

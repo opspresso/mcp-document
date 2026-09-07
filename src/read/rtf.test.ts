@@ -55,6 +55,21 @@ test("a unicode escape wins over the fallback that follows it", () => {
   assert.doesNotMatch(text, /\?/);
 });
 
+test("Unicode fallback lengths are scoped and stop at group boundaries", () => {
+  assert.equal(rtfToText(rtf("\\uc1 {\\uc0\\u65}\\u66?tail")).text, "ABtail");
+  assert.equal(rtfToText(rtf("\\uc1\\u65{\\b B}C")).text, "A**B**C");
+  assert.equal(rtfToText(rtf("\\uc1\\u65\\b plain")).text, "Aplain");
+  assert.equal(rtfToText(rtf("\\uc1\\u65\\-tail")).text, "Atail");
+  assert.equal(rtfToText(rtf("\\uc1\\u65\\bin3 xyztail")).text, "Atail");
+});
+
+test("binary payload bytes cannot close a skipped picture group", () => {
+  const text = rtfToText(rtf("\\pard{\\pict\\bin3 " + "}\\{" + "}kept\\par")).text;
+  assert.equal(text, "![image]()\n\nkept");
+  assert.throws(() => rtfToText(rtf("\\pard{\\pict\\bin100 x}")), /binary data/);
+  assert.equal(rtfToText(rtf("{\\annotation{\\*\\shppict{\\pict ff}}}body")).text, "body");
+});
+
 test("a negative unicode code point is the signed 16-bit form", () => {
   // Writers emit negative numbers for anything past U+7FFF; -11384 is 54152.
   assert.equal(rtfToText(rtf("\\pard \\u-11384?\\par")).text, String.fromCodePoint(54152));
