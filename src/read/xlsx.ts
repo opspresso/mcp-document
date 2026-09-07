@@ -221,9 +221,8 @@ class SharedStrings implements XmlHandler {
   }
 }
 
-/** One worksheet's cells, as rows of already-positioned strings. */
+/** One worksheet's cells, emitted one row at a time or retained for inspection. */
 class Sheet implements XmlHandler {
-  private readonly rows: string[][] = [];
   private readonly inspected: InspectedCell[] = [];
   private cells: string[] = [];
   private column = 0;
@@ -255,7 +254,7 @@ class Sheet implements XmlHandler {
 
   constructor(
     private readonly shared: readonly string[],
-    private readonly keepRows = true,
+    private readonly onRow: ((cells: readonly string[]) => void) | undefined,
     private readonly inspectionLimit = 0,
     /** Cell-style indices whose number format means a date or a time. */
     private readonly dates: ReadonlySet<number> = new Set(),
@@ -354,9 +353,7 @@ class Sheet implements XmlHandler {
             `a worksheet has more than ${MAX_SPREADSHEET_ROWS.toLocaleString("en-US")} rows`,
           );
         }
-        if (this.keepRows) {
-          this.rows.push(this.cells);
-        }
+        this.onRow?.(this.cells);
         this.cells = [];
         return;
       default:
@@ -384,17 +381,14 @@ class Sheet implements XmlHandler {
     return this.buffer;
   }
 
-  /** Pad to the cell's own column, so a sparse row keeps its shape. */
+  /** Retain sparse positions without allocating every preceding empty cell. */
   private place(value: string): void {
-    while (this.cells.length < this.column) {
-      this.cells.push("");
-    }
     this.cells[this.column] = value;
   }
 
   private finishCell(): void {
     const value = this.resolve();
-    if (this.keepRows) {
+    if (this.onRow) {
       this.place(value);
     }
     if (this.inspectionLimit > 0) {
@@ -409,10 +403,6 @@ class Sheet implements XmlHandler {
         this.inspectionComplete = false;
       }
     }
-  }
-
-  done(): string[][] {
-    return this.rows;
   }
 
   inspection(): { cells: InspectedCell[]; totalCells: number; complete: boolean } {
@@ -473,14 +463,13 @@ function sheetParts(
   return sheets;
 }
 
-/**
- * Trailing empty cells are the grid's, not the row's.
- *
- * Trimmed *before* the separators are stripped: the join leaves a space after
- * the last one, and an anchored pattern will not reach past it.
- */
+/** Remove empty grid cells before joining, so literal pipes remain data. */
 function rowText(cells: readonly string[]): string {
-  return cells.join(" | ").trim().replace(/(?:\s*\|)+$/, "").trim();
+  let end = cells.length;
+  while (end > 0 && !(cells[end - 1] ?? "").trim()) {
+    end -= 1;
+  }
+  return cells.slice(0, end).join(" | ").trim();
 }
 
 export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
@@ -532,30 +521,32 @@ export function xlsxToText(bytes: Uint8Array, maxChars: number): XlsxText {
     if (!part) {
       continue;
     }
-    const reader = new Sheet(strings, true, 0, dates, epoch1904);
-    walkXml(decoder.decode(part), reader);
-    const rows = reader.done();
-    total += rows.length;
-    if (!full) {
-      // Past the budget: still counted, so the note can say how much was left.
-      continue;
+    if (full) {
+      const heading = `${lines.length > 0 ? "\n" : ""}## ${sheet.name}`;
+      const cost = heading.length + (lines.length > 0 ? 1 : 0);
+      if (length + cost > maxChars) {
+        full = false;
+      } else {
+        lines.push(heading);
+        length += cost;
+        sheetsRead += 1;
+      }
     }
-    sheetsRead += 1;
-    // Named, because a workbook's sheets are how a person addresses part of it.
-    const heading = `## ${sheet.name}`;
-    lines.push(heading);
-    length += heading.length + 1;
-    for (const cells of rows) {
+    const reader = new Sheet(strings, (cells) => {
+      total += 1;
+      if (!full) {
+        return;
+      }
       const line = rowText(cells);
       if (length + line.length + 1 > maxChars) {
         full = false;
-        break;
+        return;
       }
       lines.push(line);
       length += line.length + 1;
       kept += 1;
-    }
-    lines.push("");
+    }, 0, dates, epoch1904);
+    walkXml(decoder.decode(part), reader);
   }
 
   if (kept === 0) {
@@ -620,7 +611,7 @@ export function inspectXlsx(bytes: Uint8Array, includeHidden = false): XlsxInspe
     if (!part) {
       continue;
     }
-    const reader = new Sheet(strings, false, remaining, dates, epoch1904);
+    const reader = new Sheet(strings, undefined, remaining, dates, epoch1904);
     walkXml(decoder.decode(part), reader);
     const result = reader.inspection();
     inspected.push({ name: sheet.name, state: sheet.state, cells: result.cells, totalCells: result.totalCells });

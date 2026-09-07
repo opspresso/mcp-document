@@ -185,6 +185,28 @@ test("trailing empty cells do not become trailing separators", () => {
   assert.equal(read(bytes).text, "## Sheet1\n1");
 });
 
+test("a trailing pipe in a cell value is preserved", () => {
+  const bytes = oneSheet('<row><c t="inlineStr"><is><t>value |</t></is></c><c/></row>');
+  assert.equal(read(bytes).text, "## Sheet1\nvalue |");
+});
+
+test("sheet headings and their separators stay within the text budget", () => {
+  const bytes = buildZip({
+    "xl/workbook.xml": utf8(workbook("First", "Second")),
+    "xl/_rels/workbook.xml.rels": utf8(RELS),
+    "xl/worksheets/sheet1.xml": utf8(sheet('<row><c><v>1</v></c></row>')),
+    "xl/worksheets/sheet2.xml": utf8(sheet('<row><c><v>2</v></c></row>')),
+  });
+  const first = "## First\n1";
+  for (const budget of [first.length, first.length + 1]) {
+    const result = read(bytes, budget);
+    assert.equal(result.text, first);
+    assert.equal(result.sheets, 1);
+    assert.equal(result.rows, 1);
+    assert.equal(result.totalRows, 2);
+  }
+});
+
 test("a zip with no workbook part is refused as not being one", () => {
   assert.throws(() => read(buildZip({ "notes.txt": utf8("hi") })), XlsxError);
 });
