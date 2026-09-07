@@ -220,6 +220,25 @@ test("a word wider than the page gets its own line rather than an endless loop",
   assert.match(text, /end/);
 });
 
+test("long code lines retain every character within the page width", async () => {
+  for (const source of ["abc123_".repeat(60) + "END", "한글코드".repeat(80) + "끝"]) {
+    const { bytes } = await renderPdf(parseMarkdown("```\n" + source + "\n```"), {
+      title: "Code", created: CREATED,
+    });
+    const text = await extractLines(bytes);
+    assert.equal(text.replace(/\s/g, ""), source);
+    const { getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    for (const item of content.items) {
+      if ("str" in item && item.str.trim()) {
+        assert.ok(item.transform[4] + item.width < 540, "code stays inside the right margin");
+      }
+    }
+  }
+});
+
 test("the file records what wrote it", async () => {
   const { bytes } = await renderPdf(parseMarkdown("body"), { title: "t", created: CREATED });
   const { getDocumentProxy } = await import("unpdf");
@@ -284,4 +303,18 @@ test("a memo stays a memo: no cover page, no contents, no ordinals", async () =>
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
   const { text } = await extractText(pdf, { mergePages: true });
   assert.equal(text.includes("목차"), false);
+});
+
+test("an overlong paragraph word is wrapped within the page", async () => {
+  const source = "x".repeat(400);
+  const { bytes } = await renderPdf(parseMarkdown(source), { title: "Word", created: CREATED });
+  assert.equal((await extractLines(bytes)).replace(/\s/g, ""), source);
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const content = await (await pdf.getPage(1)).getTextContent();
+  for (const item of content.items) {
+    if ("str" in item && item.str.trim()) {
+      assert.ok(item.transform[4] + item.width < 540, "word stays inside the right margin");
+    }
+  }
 });

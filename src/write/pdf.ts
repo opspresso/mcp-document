@@ -195,12 +195,19 @@ function colourFor(run: Run, colours: PdfColours, override?: RGB): RGB {
 }
 
 /** Split a run into the smallest pieces a line may break between. */
-function atomsOf(run: Run, fonts: Fonts, size: number): Atom[] {
+function atomsOf(run: Run, fonts: Fonts, size: number, maxWidth = Infinity): Atom[] {
   const font = fontFor(fonts, run);
   const atoms: Atom[] = [];
   const push = (text: string, space: boolean): void => {
     if (text !== "") {
-      atoms.push({ text, run, width: font.widthOfTextAtSize(text, size), space });
+      const width = font.widthOfTextAtSize(text, size);
+      if (width <= maxWidth) {
+        atoms.push({ text, run, width, space });
+      } else {
+        for (const piece of textSegments(text, font, size, maxWidth)) {
+          atoms.push({ text: piece, run, width: font.widthOfTextAtSize(piece, size), space });
+        }
+      }
     }
   };
   let word = "";
@@ -248,6 +255,23 @@ function wrap(atoms: readonly Atom[], maxWidth: number): Line[] {
   if (current.length > 0) {
     lines.push({ atoms: current, width });
   }
+  return lines;
+}
+
+/** Split overlong text without dropping whitespace or splitting UTF-16 surrogate pairs. */
+function textSegments(text: string, font: PDFFont, size: number, width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const character of text) {
+    const next = current + character;
+    if (current !== "" && font.widthOfTextAtSize(next, size) > width) {
+      lines.push(current);
+      current = character;
+    } else {
+      current = next;
+    }
+  }
+  lines.push(current);
   return lines;
 }
 
@@ -554,7 +578,7 @@ class Writer {
     const { size, left, width } = options;
     const atoms = [
       ...(options.firstLinePrefix ?? []),
-      ...runs.flatMap((run) => atomsOf(run, this.fonts, size)),
+      ...runs.flatMap((run) => atomsOf(run, this.fonts, size, width)),
     ];
     const lines = wrap(atoms, width);
     const height = size * (options.leading ?? LEADING.document.body);
@@ -573,7 +597,7 @@ class Writer {
     const font = monospaced ? this.fonts.mono : this.fonts.regular;
     const height = CODE_SIZE * LEADING.document.compact;
     this.space(PARAGRAPH_SPACE);
-    for (const line of lines) {
+    for (const line of lines.flatMap((line) => textSegments(line, font, CODE_SIZE, CONTENT_WIDTH - 12))) {
       this.reserve(height);
       this.page.drawRectangle({
         x: MARGIN,
@@ -582,14 +606,7 @@ class Writer {
         height,
         color: this.colours.tint,
       });
-      // Cut rather than wrapped: a wrapped line of code is a line of code that
-      // says something different, and there is no continuation marker in a PDF
-      // that would say otherwise.
-      let visible = line;
-      while (visible !== "" && font.widthOfTextAtSize(visible, CODE_SIZE) > CONTENT_WIDTH - 12) {
-        visible = visible.slice(0, -1);
-      }
-      this.page.drawText(visible, {
+      this.page.drawText(line, {
         x: MARGIN + 6,
         y: this.y + height * 0.28,
         size: CODE_SIZE,
@@ -610,7 +627,7 @@ class Writer {
       const laid = Array.from({ length: columns }, (_, column) => {
         const runs = (cells[column] ?? []).map((run) => (header ? { ...run, bold: true } : run));
         return wrap(
-          runs.flatMap((run) => atomsOf(run, this.fonts, BODY_SIZE)),
+          runs.flatMap((run) => atomsOf(run, this.fonts, BODY_SIZE, widths[column]! - 10)),
           widths[column]! - 10,
         );
       });
@@ -679,7 +696,7 @@ class Writer {
     const width = natural.width * scale;
     const height = natural.height * scale;
     const captionLines = wrap(
-      figure.caption.flatMap((run) => atomsOf(run, this.fonts, CAPTION_SIZE)),
+      figure.caption.flatMap((run) => atomsOf(run, this.fonts, CAPTION_SIZE, CONTENT_WIDTH)),
       CONTENT_WIDTH,
     );
     const lineHeight = CAPTION_SIZE * LEADING.document.compact;
