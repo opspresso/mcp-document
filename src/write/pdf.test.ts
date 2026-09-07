@@ -255,6 +255,16 @@ test("an empty document is still a valid PDF", async () => {
   assert.equal(Buffer.from(bytes.subarray(0, 4)).toString("latin1"), "%PDF");
 });
 
+test("a cover-only PDF does not append an empty body page", async () => {
+  const { bytes, pages } = await renderPdf(parseMarkdown("# Title\n\nSubtitle"), {
+    title: "Title", created: CREATED,
+  });
+  assert.equal(pages, 1);
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
+  const text = await extractLines(bytes);
+  assert.ok(text.includes("Title") && text.includes("Subtitle"));
+});
+
 test("column widths follow the content and stay inside their clamps", () => {
   const cell = (text: string) => [[{ text }]];
   const rows = [

@@ -987,7 +987,9 @@ export async function renderPdf(
     if (toc) {
       writer.reserveTocPage();
     }
-    writer.newPage();
+    if (body.length > 0) {
+      writer.newPage();
+    }
   }
   let ordinal = 0;
   for (const block of body) {
