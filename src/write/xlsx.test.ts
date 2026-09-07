@@ -63,6 +63,29 @@ test("rows wider than the Excel grid are refused before rendering", () => {
   );
 });
 
+test("sheet names cannot change or collide during XML serialization", () => {
+  for (const name of ["\u0000", "Data\u0000", "D\u000ba\u000cta"]) {
+    assert.throws(
+      () => renderXlsx([{ name, rows: [] }], { title: "t", created: CREATED }),
+      /invalid name/,
+    );
+  }
+});
+
+test("formula validation applies to the expression written to XML", () => {
+  for (const formula of ["=", " =  ", "1\u0000+2"]) {
+    assert.throws(
+      () => renderXlsx([{ name: "Data", rows: [[{ formula }]] }], { title: "t", created: CREATED }),
+      /formula/,
+    );
+  }
+  const rendered = renderXlsx(
+    [{ name: "Data", rows: [[{ formula: " = SUM(A2:A3) ", cachedValue: 3 }]] }],
+    { title: "t", created: CREATED },
+  );
+  assert.equal(inspectXlsx(rendered.bytes).sheets[0]!.cells[0]!.formula, "SUM(A2:A3)");
+});
+
 test("the header band is the design system's, not a colour typed into this file", () => {
   // It was `FF1F4E78` — one digit off the palette entry it had been copied from,
   // and the reason a renderer states no colour of its own.

@@ -68,9 +68,13 @@ function cell(value: unknown, where: string): SpreadsheetCell {
   if (typeof formula !== "string" || formula.trim() === "") {
     throw new DocumentError(`${where} formula cell must carry a non-empty formula`);
   }
+  const expression = formula.trim().replace(/^=/, "").trim();
+  if (expression === "" || formula !== formula.replace(XML_CONTROL, "")) {
+    throw new DocumentError(`${where} formula must contain an expression without XML control characters`);
+  }
   const cached = (value as { cachedValue?: unknown }).cachedValue;
   return {
-    formula,
+    formula: expression,
     ...(cached === undefined ? {} : { cachedValue: scalar(cached, `${where}.cachedValue`) }),
   };
 }
@@ -94,6 +98,7 @@ function sheetsOf(raw: unknown): SpreadsheetSheet[] {
       name.trim() === "" ||
       name.length > 31 ||
       INVALID_SHEET_NAME.test(name) ||
+      name !== name.replace(XML_CONTROL, "") ||
       name.startsWith("'") ||
       name.endsWith("'")
     ) {
@@ -148,7 +153,7 @@ function cellXml(value: SpreadsheetCell, address: string, header: boolean): stri
       cached === undefined || cached === null
         ? ""
         : `<v>${xmlText(typeof cached === "boolean" ? (cached ? "1" : "0") : String(cached))}</v>`;
-    return `<c r="${address}"${type}${style}><f>${xmlText(value.formula.replace(/^=/, ""))}</f>${body}</c>`;
+    return `<c r="${address}"${type}${style}><f>${xmlText(value.formula)}</f>${body}</c>`;
   }
   if (typeof value === "string") {
     return `<c r="${address}" t="inlineStr"${style}><is><t xml:space="preserve">${xmlText(value)}</t></is></c>`;
