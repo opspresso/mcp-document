@@ -431,6 +431,14 @@ test("a comparison renders two chips with the column lines beneath", () => {
   assert.ok(text.includes("- 신규 권장"), text);
 });
 
+test("a comparison containing numbered steps preserves them as a list", () => {
+  const body = "### A\n\n1. first\n2. second\n\n### B\n\n- other";
+  for (const source of [body, `:::comparison\n${body}\n:::`]) {
+    const text = roundTrip(`## A vs B\n\n${source}`);
+    assert.ok(text.includes("1. first\n2. second"), text);
+  }
+});
+
 test("a process is a row of nodes with arrows between, reading back as the list it was", () => {
   const bytes = build("## 절차\n\n1. 접수\n2. 검토\n3. 발송");
   const slide = partOf(bytes, "ppt/slides/slide1.xml");

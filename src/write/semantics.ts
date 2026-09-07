@@ -228,6 +228,9 @@ export function columnsOf(blocks: readonly Block[]): Semantic | undefined {
       continue;
     }
     if (block.kind === "list") {
+      if (block.ordered || block.items.some((item) => item.depth !== 0)) {
+        return undefined;
+      }
       for (const item of block.items) {
         column.lines.push({ runs: item.runs, bullet: true });
       }

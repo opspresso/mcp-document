@@ -9,7 +9,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { parseMarkdown } from "../markdown.js";
-import { figureOf, recognise } from "./semantics.js";
+import { figureOf, forceSemantic, recognise } from "./semantics.js";
 
 function detect(markdown: string) {
   const { blocks } = parseMarkdown(markdown);
@@ -116,6 +116,15 @@ test("a comparison needs exactly two columns with something in each", () => {
   assert.equal(detect("## A vs B\n\n### A\n\n- a"), undefined, "one column");
   assert.equal(detect("## A vs B\n\n### A\n\n- a\n\n### B\n\n- b\n\n### C\n\n- c"), undefined, "three columns");
   assert.equal(detect("## A vs B\n\n### A\n\n### B\n\n- b"), undefined, "an empty column");
+});
+
+test("comparison layouts do not discard list order or nesting", () => {
+  for (const list of ["1. first\n2. second", "- parent\n  - child"]) {
+    const source = `## A vs B\n\n### A\n\n${list}\n\n### B\n\n- other`;
+    assert.equal(detect(source), undefined);
+    const [, ...body] = parseMarkdown(source).blocks;
+    assert.equal(forceSemantic("comparison", body), undefined);
+  }
 });
 
 test("a figure is one asset image standing alone, and nothing else", () => {
