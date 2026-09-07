@@ -57,7 +57,7 @@ export const CONTINUED = " (계속)";
  * Thank you, Q&A — and only when it is the last section of the document.
  * Recognising "다음 단계" here would turn a roadmap into a goodbye.
  */
-const CLOSING_TITLE = /^(감사합니다|고맙습니다|thank\s*you|thanks|q\s*&?\s*a|질문|문의)/i;
+const CLOSING_TITLE = /^(감사합니다|고맙습니다|thank\s*you|thanks|q\s*&?\s*a|질문|문의)[.!?。！？]*$/i;
 
 const BODY_STYLE: Style = { size: BODY_SIZE, indent: 0 };
 

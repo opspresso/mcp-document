@@ -378,6 +378,15 @@ test("a final thank-you section is a closing slide; the same title mid-deck is n
   assert.ok(partOf(middle, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout2.xml"));
 });
 
+test("closing slide recognition matches a whole closing phrase", () => {
+  for (const title of ["Qatar expansion", "질문 처리 절차", "Thanks to our partners"]) {
+    const bytes = build(`# Cover\n\n## ${title}\n\nContent`);
+    assert.ok(partOf(bytes, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout2.xml"), title);
+  }
+  const closing = build("# Cover\n\n## Thank you!");
+  assert.ok(partOf(closing, "ppt/slides/_rels/slide2.xml.rels").includes("slideLayout4.xml"));
+});
+
 test("the deck's name sits on the content layout, out of the slides' text", () => {
   const bytes = renderPptx(parseMarkdown("## 본문\n\n내용"), {
     title: "분기 보고서",
