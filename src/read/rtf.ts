@@ -398,7 +398,9 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
 
     const match = /^([a-zA-Z]+)(-?\d+)? ?/.exec(source.slice(index + 1));
     if (!match) {
-      // A control symbol this reader has no meaning for.
+      if (Object.hasOwn(LITERALS, next)) {
+        emit(LITERALS[next]!);
+      }
       index += 1;
       continue;
     }
@@ -471,7 +473,7 @@ export function rtfToBlocks(bytes: Uint8Array): RtfBlocks {
       default:
         break;
     }
-    const literal = LITERALS[word];
+    const literal = Object.hasOwn(LITERALS, word) ? LITERALS[word] : undefined;
     if (literal !== undefined) {
       emit(literal);
     }

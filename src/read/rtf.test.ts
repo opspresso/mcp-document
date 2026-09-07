@@ -66,6 +66,14 @@ test("escaped braces and backslashes are literal", () => {
   assert.equal(rtfToText(rtf("\\pard a \\{b\\} \\\\c\\par")).text, "a {b} \\\\c");
 });
 
+test("control symbols preserve their visible characters", () => {
+  assert.equal(rtfToText(rtf("\\pard one\\~two\\_three\\-four\\par")).text, "one two-threefour");
+});
+
+test("unknown control words cannot resolve inherited object properties", () => {
+  assert.equal(rtfToText(rtf("\\pard before\\constructor after\\par")).text, "beforeafter");
+});
+
 test("paragraphs and tabs become the lines and columns they are", () => {
   const { text } = rtfToText(rtf("\\pard one\\par two\\line three\\par name\\tab value\\par"));
   assert.equal(text, "one\n\ntwo\n\nthree\n\nname\tvalue");
