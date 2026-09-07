@@ -361,8 +361,7 @@ class Extractor implements XmlHandler {
           // `hMerge`/`vMerge` mark the position a span already claimed, which
           // the serializer's grid reserves from the span itself.
           table.covered =
-            attributeOf(attributes, "hMerge") !== undefined ||
-            attributeOf(attributes, "vMerge") !== undefined;
+            on(attributes, "hMerge") || on(attributes, "vMerge");
         }
         this.cellDepth += 1;
         return;

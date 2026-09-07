@@ -157,3 +157,14 @@ test("a cell that spans columns says so", () => {
     assert.equal(table.merged, true);
   }
 });
+
+test("explicitly disabled merge flags do not discard table cells", () => {
+  for (const value of ["0", "false"]) {
+    const xml = `<a:tbl><a:tr><a:tc hMerge="${value}" vMerge="${value}">${para("kept")}</a:tc>` +
+      `<a:tc>${para("next")}</a:tc></a:tr></a:tbl>`;
+    const table = slideXmlToBlocks(xml).find((block) => block.kind === "table");
+    assert.ok(table);
+    assert.equal(table.columns, 2);
+    assert.deepEqual(table.rows[0]?.cells.map((cell) => cell.runs.map((run) => run.text).join("")), ["kept", "next"]);
+  }
+});
