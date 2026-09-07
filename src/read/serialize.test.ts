@@ -9,7 +9,7 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { parseMarkdown, plainTextOf, type Block } from "../markdown.js";
+import { parseMarkdown, plainTextOf } from "../markdown.js";
 import type { ReadBlock, ReadCell, ReadTable } from "./blocks.js";
 import { blocksToMarkdown } from "./serialize.js";
 
@@ -93,15 +93,19 @@ test("a cell that spans rows leaves the row below it empty in that column", () =
   assert.deepEqual(text.split("\n"), ["| 묶음 | a |", "| --- | --- |", "|  | b |"]);
 });
 
-test("a one-column table is paragraphs, because this parser cannot read one back", () => {
-  // `TABLE_DIVIDER` needs two columns. Writing `|---|` would produce a table
-  // that re-renders as literal pipes.
-  const { text } = write([table([[cell("only")], [cell("rows")]])]);
-  assert.equal(text, "only\n\nrows");
-  assert.deepEqual(
-    parseMarkdown(text).blocks.map((block: Block) => block.kind),
-    ["paragraph", "paragraph"],
-  );
+test("a one-column table retains its structure and alignment", () => {
+  const written = write([table([[cell("only")], [cell("rows")]], { align: ["right"] })]);
+  assert.equal(written.text, "| only |\n| --: |\n| rows |");
+  const [block] = parseMarkdown(written.text).blocks;
+  assert.equal(block?.kind, "table");
+  if (block?.kind === "table") {
+    assert.deepEqual(block.align, ["right"]);
+    assert.deepEqual(block.header.map(plainTextOf), ["only"]);
+    assert.deepEqual(block.rows.map((row) => row.map(plainTextOf)), [["rows"]]);
+  }
+  const partial = write([table([[cell("only")], [cell("rows")]])], 18);
+  assert.equal(partial.complete, false);
+  assert.equal(parseMarkdown(partial.text).blocks[0]?.kind, "table");
 });
 
 test("the header is the row the document marked, not the first one", () => {

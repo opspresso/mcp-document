@@ -134,3 +134,19 @@ test("a prose document comes back with no markup it did not have", () => {
   const bytes = renderDocx(parseMarkdown("첫 문단\n\n둘째 문단"), { title: "t", created: CREATED });
   assert.equal(docxToText(bytes).text, "첫 문단\n\n둘째 문단");
 });
+
+test("a single-column table survives document and deck round trips", () => {
+  const document = parseMarkdown("| Item |\n| ---: |\n| Value |");
+  const options = { title: "Table", created: CREATED };
+  const outputs = [
+    docxToText(renderDocx(document, options)).text,
+    hwpxToText(renderHwpx(document, options)).text,
+    pptxToText(renderPptx(document, options).bytes).text,
+  ];
+  for (const text of outputs) {
+    const table = parseMarkdown(text).blocks.find((block) => block.kind === "table");
+    assert.ok(table, text);
+    assert.deepEqual(table.header.map(plainTextOf), ["Item"]);
+    assert.deepEqual(table.rows.map((row) => row.map(plainTextOf)), [["Value"]]);
+  }
+});

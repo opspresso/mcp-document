@@ -99,7 +99,7 @@ test("the repeat that pads a row to the sheet's width costs nothing", () => {
     `<table:table-row><table:table-cell><text:p>A</text:p></table:table-cell>` +
     `<table:table-cell table:number-columns-repeated="16384"/></table:table-row>`;
   const bytes = odf(MIME.spreadsheet, `<table:table table:name="Data">${row}</table:table>`);
-  assert.equal(odfToText(bytes).text, "## Data\n\nA");
+  assert.equal(odfToText(bytes).text, "## Data\n\n| A |\n| --- |");
 });
 
 test("a cell covered by a merge still holds its column", () => {

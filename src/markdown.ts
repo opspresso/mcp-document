@@ -105,7 +105,7 @@ const DIRECTIVE_OPEN = /^:::\s*([a-z][a-z-]*)\s*$/;
 const DIRECTIVE_CLOSE = /^:::\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const LIST_ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
-const TABLE_DIVIDER = /^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?\s*$/;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 type Style = Omit<Run, "text">;
 

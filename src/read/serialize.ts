@@ -35,16 +35,6 @@ export interface Serialized {
   complete: boolean;
 }
 
-/**
- * A GFM divider needs two columns.
- *
- * `TABLE_DIVIDER` is `\|?(?:…\|)+…`, so `|---|` alone does not parse as one
- * *here* even though GitHub accepts it. A one-column table is written as one
- * paragraph per row instead — a table this server could not read back would
- * fail its own round trip and re-render as literal pipes.
- */
-const MIN_TABLE_COLUMNS = 2;
-
 const DIVIDERS: Record<Align, string> = {
   left: "---",
   center: ":-:",
@@ -156,13 +146,6 @@ function tableRow(cells: readonly string[]): string {
   return `| ${cells.join(" | ")} |`;
 }
 
-/** A one-column table: one paragraph per row, inventing no structure. */
-function tableAsParagraphs(table: ReadTable): string[] {
-  return table.rows
-    .map((row) => escapeLineStart(cellText(row.cells[0]?.runs ?? []).replace(/\\\|/g, "|")))
-    .filter((line) => line !== "");
-}
-
 /**
  * A table, and how much of it fitted.
  *
@@ -173,23 +156,8 @@ function tableChunk(
   table: ReadTable,
   budget: number,
 ): { text: string; rows: number; complete: boolean } {
-  if (table.rows.length === 0 || table.columns < MIN_TABLE_COLUMNS) {
-    // One column is paragraphs, and paragraphs answer to the budget like any
-    // others: writing them all regardless made a narrow table all-or-nothing,
-    // and reporting `rows: table.rows.length` for the nothing case counted
-    // rows that were never written.
-    const lines = tableAsParagraphs(table);
-    const kept: string[] = [];
-    let used = 0;
-    for (const line of lines) {
-      const cost = (kept.length === 0 ? 0 : 2) + line.length;
-      if (used + cost > budget) {
-        return { text: kept.join("\n\n"), rows: kept.length, complete: false };
-      }
-      kept.push(line);
-      used += cost;
-    }
-    return { text: kept.join("\n\n"), rows: kept.length, complete: true };
+  if (table.rows.length === 0) {
+    return { text: "", rows: 0, complete: true };
   }
   const grid = gridOf(table.rows, table.columns);
   const align = Array.from(
