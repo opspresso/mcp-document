@@ -572,6 +572,11 @@ class Renderer {
   }
 
   private table(block: Extract<Block, { kind: "table" }>): string {
+    // Reserve document-level state for the containing paragraph before building cells.
+    const section = this.sectionEmitted ? "" : sectionProperties(this.design);
+    this.sectionEmitted = true;
+    const breakBefore = this.breakNext;
+    this.breakNext = false;
     const rows = [block.header, ...block.rows];
     const columns = Math.max(1, ...rows.map((row) => row.length));
     const widths = columnShares(rows, columns).map((share) => Math.round(share * TEXT_WIDTH));
@@ -631,7 +636,8 @@ class Renderer {
       body +
       "</hp:tbl>";
     // A table is an object inside a run, which is inside a paragraph of its own.
-    return this.paragraph(this.run("", 0, table), PARA_BODY);
+    this.breakNext = breakBefore;
+    return this.paragraph(this.run("", 0, section + table), PARA_BODY);
   }
 
   block(block: Block): string {

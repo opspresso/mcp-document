@@ -177,6 +177,16 @@ test("the section properties are written exactly once", () => {
   assert.equal(section.match(/<hp:secPr /g)?.length, 1);
 });
 
+test("a leading table keeps section properties and page breaks outside its cells", () => {
+  const table = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+  const first = partOf(build(table), "Contents/section0.xml");
+  assert.match(first, /<hs:sec[^>]*><hp:p[^>]*><hp:run[^>]*><hp:secPr /);
+  assert.equal(first.match(/<hp:secPr /g)?.length, 1);
+  const afterCover = partOf(build(`# Cover\n\n${table}`), "Contents/section0.xml");
+  assert.ok(afterCover.indexOf('pageBreak="1"') < afterCover.indexOf("<hp:tbl "));
+  assert.equal(afterCover.match(/pageBreak="1"/g)?.length, 1);
+});
+
 test("an empty document still carries its section", () => {
   const bytes = renderHwpx({ blocks: [] }, OPTIONS);
   const section = partOf(bytes, "Contents/section0.xml");
