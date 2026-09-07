@@ -179,6 +179,8 @@ test("a block bigger than one call still gets a line of its own", () => {
   const described = inspectBlocks([huge, { kind: "paragraph", runs: [{ text: "after" }] }]);
   assert.equal(described.to, 0, "block 0 was described");
   assert.match(described.text, /^0 table rows=4000 /);
+  const onlyBlock = inspectBlocks([huge]);
+  assert.equal(onlyBlock.complete, false, "a table summary does not include all its rows");
 });
 
 test("a list and a code block answer to the budget", () => {

@@ -184,6 +184,7 @@ export function inspectBlocks(
   const lines: string[] = [];
   let used = 0;
   let last = from - 1;
+  let truncated = false;
   for (let index = from; index <= to; index += 1) {
     const block = blocks[index];
     if (!block) {
@@ -192,6 +193,7 @@ export function inspectBlocks(
     const written = linesOf(index, block);
     const length = written.reduce((sum, line) => sum + line.length + 1, 0);
     if (used + length > MAX_TEXT_CHARS) {
+      truncated = true;
       // A block bigger than the whole budget — a four-thousand-row table — has
       // to give something rather than nothing, or a caller paging by
       // `from = to + 1` would step straight over it and never see it at all.
@@ -216,6 +218,6 @@ export function inspectBlocks(
     // "this window is empty" — reporting `from` claimed a block was covered.
     to: last,
     totalBlocks: total,
-    complete: last === total - 1 && from === 0,
+    complete: !truncated && last === total - 1 && from === 0,
   };
 }
