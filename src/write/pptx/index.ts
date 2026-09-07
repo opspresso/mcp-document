@@ -96,7 +96,7 @@ export function renderPptx(document: MarkdownDocument, options: PptxOptions): Re
     if (slide.type !== "image" || media.has(slide.asset)) {
       continue;
     }
-    const asset = assets[slide.asset];
+    const asset = Object.hasOwn(assets, slide.asset) ? assets[slide.asset] : undefined;
     if (!asset) {
       throw new DocumentError(
         `the document references asset://${slide.asset} but no asset of that name was provided`,

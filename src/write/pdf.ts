@@ -904,7 +904,7 @@ export async function renderPdf(
   };
   const images = new Map<string, EmbeddedFigure>();
   for (const name of figureAssets(document.blocks)) {
-    const asset = options.assets?.[name];
+    const asset = options.assets && Object.hasOwn(options.assets, name) ? options.assets[name] : undefined;
     if (!asset) {
       throw new DocumentError(
         `the document references asset://${name} but no asset of that name was provided`,

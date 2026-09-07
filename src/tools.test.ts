@@ -371,6 +371,21 @@ test("a deck that references an asset nobody sent is refused by name", async () 
   assert.ok(result.isError && result.text.includes("asset://ghost.png"), result.text);
 });
 
+test("asset names are resolved only from supplied image entries", async () => {
+  const png = {
+    mimeType: "image/png",
+    content: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X4cSAAAAAElFTkSuQmCC",
+  };
+  for (const format of ["docx", "pptx", "pdf"]) {
+    const args = { format, content: "## Figure\n\n![image](asset://constructor)" };
+    const missing = await call("render_document", { ...args, assets: { other: png } });
+    assert.equal(missing.isError, true);
+    assert.match(missing.text, /asset:\/\/constructor.*no asset/);
+    const supplied = await call("render_document", { ...args, assets: { constructor: png } });
+    assert.equal(supplied.isError, false, supplied.text);
+  }
+});
+
 /** The `tool_call` lines written while `run` executes, parsed. */
 async function linesDuring(run: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
   const write = mock.method(console, "log", () => {});

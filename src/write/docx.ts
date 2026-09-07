@@ -412,7 +412,7 @@ class Renderer {
    * picture reads as "the image was empty", which is the wrong claim.
    */
   private figure(figure: Figure): string {
-    const asset = this.assets[figure.asset];
+    const asset = Object.hasOwn(this.assets, figure.asset) ? this.assets[figure.asset] : undefined;
     if (!asset) {
       throw new DocumentError(
         `the document references asset://${figure.asset} but no asset of that name was provided`,
