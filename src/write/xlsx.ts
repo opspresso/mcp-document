@@ -165,23 +165,20 @@ function cellXml(value: SpreadsheetCell, address: string, header: boolean): stri
 }
 
 function worksheetXml(sheet: SpreadsheetSheet): string {
-  const columns = Math.max(0, ...sheet.rows.map((row) => row.length));
-  const widths = Array.from({ length: columns }, (_, column) => {
-    const width = Math.min(
-      60,
-      Math.max(
-        10,
-        ...sheet.rows.map((row) => {
-          const value = row[column];
-          if (value && typeof value === "object") {
-            return String(value.cachedValue ?? value.formula).length + 2;
-          }
-          return String(value ?? "").length + 2;
-        }),
-      ),
-    );
-    return `<col min="${column + 1}" max="${column + 1}" width="${width}" customWidth="1"/>`;
-  }).join("");
+  const columnWidths: number[] = [];
+  for (const row of sheet.rows) {
+    for (let column = 0; column < row.length; column += 1) {
+      const value = row[column];
+      const text = value !== null && typeof value === "object"
+        ? String(value.cachedValue ?? value.formula)
+        : String(value ?? "");
+      columnWidths[column] = Math.min(60, Math.max(columnWidths[column] ?? 10, text.length + 2));
+    }
+  }
+  const columns = columnWidths.length;
+  const widths = columnWidths.map((width, column) =>
+    `<col min="${column + 1}" max="${column + 1}" width="${width}" customWidth="1"/>`,
+  ).join("");
   const rows = sheet.rows
     .map(
       (row, rowIndex) =>
