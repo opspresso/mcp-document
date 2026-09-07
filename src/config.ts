@@ -29,8 +29,8 @@ function integer(env: NodeJS.ProcessEnv, name: string, fallback: number): number
     return fallback;
   }
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new ConfigError(`${name} must be a positive integer, got "${raw}"`);
+  if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+    throw new ConfigError(`${name} must be an integer between 1 and 65535, got "${raw}"`);
   }
   return value;
 }

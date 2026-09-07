@@ -37,3 +37,11 @@ test("a non-integer or non-positive port is refused rather than coerced", () => 
     assert.throws(() => loadConfig({ PORT: value }), ConfigError);
   }
 });
+
+test("ports are validated against the TCP range before binding", () => {
+  assert.equal(loadConfig({ PORT: "65535" }).port, 65535);
+  assert.equal(loadConfig({ PORT: "1" }).port, 1);
+  for (const value of ["65536", "1e100"]) {
+    assert.throws(() => loadConfig({ PORT: value }), ConfigError);
+  }
+});
