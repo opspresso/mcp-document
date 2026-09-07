@@ -136,6 +136,19 @@ test("a comment is not the paragraph it is anchored in", () => {
   assert.equal(odfToText(bytes).text, "본문입니다.");
 });
 
+test("skipped annotation markup cannot change an enclosing link", () => {
+  const blocks = contentXmlToBlocks(
+    '<office:body><text:p><text:a xlink:href="https://outer.example">before' +
+      '<office:annotation><text:p><text:a xlink:href="https://inner.example">skip</text:a>' +
+      '</text:p></office:annotation>after</text:a></text:p></office:body>',
+    "text",
+  ).blocks;
+  assert.deepEqual(blocks, [{
+    kind: "paragraph",
+    runs: [{ text: "beforeafter", href: "https://outer.example" }],
+  }]);
+});
+
 test("a footnote does not split the paragraph it hangs from", () => {
   // The footnote's own `</text:p>` used to flush, cutting the host paragraph in
   // half with the note's text between the pieces.

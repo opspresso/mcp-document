@@ -249,7 +249,7 @@ class Extractor implements XmlHandler {
 
   open(name: string, attributes: string, selfClosing: boolean): void {
     const local = localName(name);
-    if (SKIPPED.has(local)) {
+    if (this.skipDepth > 0 || SKIPPED.has(local)) {
       if (!selfClosing) {
         this.skipDepth += 1;
       }
@@ -422,10 +422,8 @@ class Extractor implements XmlHandler {
 
   close(name: string): void {
     const local = localName(name);
-    if (SKIPPED.has(local)) {
-      if (this.skipDepth > 0) {
-        this.skipDepth -= 1;
-      }
+    if (this.skipDepth > 0) {
+      this.skipDepth -= 1;
       return;
     }
     switch (local) {
