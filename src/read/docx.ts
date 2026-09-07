@@ -616,6 +616,9 @@ class Extractor implements XmlHandler {
         }
         return;
       case "w:hyperlink": {
+        if (selfClosing) {
+          return;
+        }
         const id = attributeOf(attributes, "r:id");
         const target = id === undefined ? undefined : this.rels.get(id);
         if (target) {

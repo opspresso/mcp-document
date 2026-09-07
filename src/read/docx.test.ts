@@ -179,6 +179,12 @@ test("a hyperlink keeps its target", () => {
   assert.equal(documentXmlToText(xml).text, "see the spec");
 });
 
+test("a self-closing hyperlink cannot capture the following text", () => {
+  const rels = '<Relationships><Relationship Id="r1" Target="https://example.com"/></Relationships>';
+  const xml = '<w:p><w:hyperlink r:id="r1"/><w:r><w:t>plain</w:t></w:r></w:p>';
+  assert.equal(documentXmlToText(xml, { rels }).text, "plain");
+});
+
 test("bold that is turned off is not bold", () => {
   // `<w:b/>` is on and `<w:b w:val="0"/>` is off. Treating any `w:b` as bold
   // is the emphasis bug nothing reports.
