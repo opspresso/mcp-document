@@ -281,7 +281,7 @@ export function detect(
   if (mimeType === "text/html" || mimeType === "application/xhtml+xml") {
     return isWebPage();
   }
-  const declared = BY_MIME_TYPE[mimeType];
+  const declared = Object.hasOwn(BY_MIME_TYPE, mimeType) ? BY_MIME_TYPE[mimeType] : undefined;
   if (declared) {
     // Only the text branch can be honoured on the header alone: every other
     // format here has magic bytes, and not finding them means the body is not
@@ -298,11 +298,11 @@ export function detect(
   if (extension === "html" || extension === "htm") {
     return isWebPage();
   }
-  const named = extension ? NAMED_REFUSALS[extension] : undefined;
+  const named = extension && Object.hasOwn(NAMED_REFUSALS, extension) ? NAMED_REFUSALS[extension] : undefined;
   if (named) {
     return cannotRead(named);
   }
-  const byExtension = extension ? BY_EXTENSION[extension] : undefined;
+  const byExtension = extension && Object.hasOwn(BY_EXTENSION, extension) ? BY_EXTENSION[extension] : undefined;
   if (byExtension === "text" || byExtension === "pdf") {
     return refuse(READ_THERE(byExtension === "pdf" ? "a PDF" : "a plain-text document"));
   }

@@ -148,3 +148,10 @@ test("extensions are read off the end of a name, case-insensitively", () => {
   assert.equal(extensionOf("noextension"), undefined);
   assert.equal(extensionOf(undefined), undefined);
 });
+
+test("unknown format hints do not resolve inherited object properties", () => {
+  assert.match(reasonOf(utf8("hello"), "", "notes.constructor"), /plain-text document/);
+  for (const mime of ["constructor", "toString", "__proto__"]) {
+    assert.match(reasonOf(utf8("hello"), mime), /plain-text document/);
+  }
+});
