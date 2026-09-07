@@ -30,6 +30,7 @@
  * fallback graphics into the body.
  */
 
+import { posix } from "node:path";
 import { MAX_TEXT_CHARS } from "../limits.js";
 import type { Align, Run } from "../markdown.js";
 import { attributeOf, localName, walkXml, type XmlHandler } from "../xml.js";
@@ -81,10 +82,7 @@ export interface DocxParts {
  * the base again would name a part that is not there.
  */
 export function partOfTarget(base: string, target: string): string {
-  if (target.startsWith("/")) {
-    return target.slice(1);
-  }
-  return `${base}/${target.replace(/^\.\//, "")}`;
+  return posix.normalize(target.startsWith("/") ? target.slice(1) : posix.join(base, target));
 }
 
 /** `Id` → `Target`, which is what an `r:id` on a link or a picture resolves to. */

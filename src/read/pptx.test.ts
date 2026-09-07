@@ -135,7 +135,7 @@ test("the deck's own order wins over the numbers its slides were named with", ()
 });
 
 test("a picture on a slide leaves a mark", () => {
-  const rels = '<Relationships><Relationship Id="rId3" Target="media/image2.png"/></Relationships>';
+  const rels = '<Relationships><Relationship Id="rId3" Target="../media/image2.png"/></Relationships>';
   const xml =
     '<p:spTree><p:pic><p:nvPicPr><p:cNvPr name="Picture 2" descr="구조도"/></p:nvPicPr>' +
     '<p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic></p:spTree>';

@@ -413,7 +413,7 @@ class Extractor implements XmlHandler {
         this.blocks.push({
           kind: "image",
           alt: alt !== undefined && alt !== "" ? alt : "image",
-          ...(target ? { target: partOfTarget("ppt", target) } : {}),
+          ...(target ? { target: partOfTarget("ppt/slides", target) } : {}),
         });
         return;
       }

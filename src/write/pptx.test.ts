@@ -510,6 +510,7 @@ test("an image section embeds the picture and captions it with the alt text", ()
   assert.ok(partOf(rendered.bytes, "[Content_Types].xml").includes('Extension="png"'));
   assert.ok(readEntries(rendered.bytes, ["ppt/media/image1.png"]).get("ppt/media/image1.png"));
   assert.ok(pptxToText(rendered.bytes).text.includes("전체 구조"), "the caption survives");
+  assert.ok(pptxToText(rendered.bytes).text.includes("ppt/media/image1.png"), "the image resolves to its actual part");
 });
 
 test("a referenced asset that was not provided is refused by name", () => {

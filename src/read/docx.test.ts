@@ -8,10 +8,16 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { documentXmlToBlocks, documentXmlToText } from "./docx.js";
+import { documentXmlToBlocks, documentXmlToText, partOfTarget } from "./docx.js";
 
 const paragraph = (...runs: string[]) =>
   `<w:p>${runs.map((run) => `<w:r><w:t>${run}</w:t></w:r>`).join("")}</w:p>`;
+
+test("package targets resolve relative segments against the declaring directory", () => {
+  assert.equal(partOfTarget("ppt/slides", "../media/image.png"), "ppt/media/image.png");
+  assert.equal(partOfTarget("word", "./media/../media/image.png"), "word/media/image.png");
+  assert.equal(partOfTarget("word", "/shared/image.png"), "shared/image.png");
+});
 
 test("each paragraph is a line", () => {
   const { text, paragraphs } = documentXmlToText(
