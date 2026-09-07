@@ -158,6 +158,12 @@ test("a pipe row with no divider under it is a paragraph, not a table", () => {
   assert.equal(parsed[0]?.kind, "paragraph");
 });
 
+test("table headers and delimiter rows must declare the same number of columns", () => {
+  for (const source of ["| a | b |\n---", "| a | b |\n| --- |", "| a |\n| --- | --- |"] ) {
+    assert.ok(blocks(source).every((block) => block.kind !== "table"));
+  }
+});
+
 test("an escaped pipe stays inside its cell", () => {
   const parsed = blocks("| expr | note |\n|---|---|\n| a \\| b | or |");
   assert.equal(parsed[0]?.kind === "table" ? plainTextOf(parsed[0].rows[0]?.[0] ?? []) : "", "a | b");

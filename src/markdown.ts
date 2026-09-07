@@ -418,7 +418,8 @@ export function parseMarkdown(source: string, depth = 0): MarkdownDocument {
     if (
       isTableRow(line) &&
       index + 1 < lines.length &&
-      TABLE_DIVIDER.test(lines[index + 1]!)
+      TABLE_DIVIDER.test(lines[index + 1]!) &&
+      splitRow(line).length === splitRow(lines[index + 1]!).length
     ) {
       const header = splitRow(line).map((cell) => parseInline(cell));
       const align = alignmentsOf(lines[index + 1]!);
