@@ -32,7 +32,7 @@
 
 import { MAX_TEXT_CHARS } from "../limits.js";
 import type { Align, Run } from "../markdown.js";
-import { attributeOf, walkXml, type XmlHandler } from "../xml.js";
+import { attributeOf, localName, walkXml, type XmlHandler } from "../xml.js";
 import { openZip } from "../zip.js";
 import { DocumentError } from "../errors.js";
 import { drawnMarker, type ReadBlock, type ReadCell, type ReadRow } from "./blocks.js";
@@ -90,14 +90,20 @@ export function partOfTarget(base: string, target: string): string {
 /** `Id` → `Target`, which is what an `r:id` on a link or a picture resolves to. */
 export function relationshipsOf(xml: string): Map<string, string> {
   const found = new Map<string, string>();
-  for (const match of xml.matchAll(/<Relationship\b([^>]*)\/?>/g)) {
-    const attributes = match[1] ?? "";
-    const id = attributeOf(attributes, "Id");
-    const target = attributeOf(attributes, "Target");
-    if (id && target) {
-      found.set(id, target);
-    }
-  }
+  walkXml(xml, {
+    text: () => {},
+    close: () => {},
+    open: (name, attributes) => {
+      if (localName(name) !== "Relationship") {
+        return;
+      }
+      const id = attributeOf(attributes, "Id");
+      const target = attributeOf(attributes, "Target");
+      if (id && target) {
+        found.set(id, target);
+      }
+    },
+  });
   return found;
 }
 

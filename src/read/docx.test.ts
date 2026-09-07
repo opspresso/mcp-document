@@ -185,6 +185,17 @@ test("a self-closing hyperlink cannot capture the following text", () => {
   assert.equal(documentXmlToText(xml, { rels }).text, "plain");
 });
 
+test("relationship XML preserves quoted delimiters and namespace prefixes", () => {
+  const xml = '<w:p><w:hyperlink r:id="r1"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>';
+  for (const prefix of ["", "rel:"]) {
+    const rels = `<${prefix}Relationships xmlns:rel="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<${prefix}Relationship Id="r1" Target="https://example.com/?a=>b"/>` +
+      `</${prefix}Relationships>`;
+    const blocks = documentXmlToBlocks(xml, { rels }).blocks;
+    assert.equal(blocks[0]?.kind === "paragraph" ? blocks[0].runs[0]?.href : undefined, "https://example.com/?a=>b");
+  }
+});
+
 test("bold that is turned off is not bold", () => {
   // `<w:b/>` is on and `<w:b w:val="0"/>` is off. Treating any `w:b` as bold
   // is the emphasis bug nothing reports.
