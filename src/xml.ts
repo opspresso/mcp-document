@@ -29,6 +29,7 @@ export interface XmlHandler {
 export class XmlError extends DocumentError {}
 
 const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
   lt: "<",
   gt: ">",
   quot: '"',
@@ -40,14 +41,19 @@ export function decodeXmlEntities(value: string): string {
   if (!value.includes("&")) {
     return value;
   }
-  return (
-    value
-      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => codePoint(parseInt(hex, 16)))
-      .replace(/&#(\d+);/g, (_, dec: string) => codePoint(Number(dec)))
-      .replace(/&([a-z]+);/gi, (match, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? match)
-      // Last: an escaped ampersand may itself introduce an entity that was never
-      // meant to be decoded.
-      .replace(/&amp;/gi, "&")
+  // Replace only references present in the source, never text a replacement introduces.
+  return value.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi,
+    (match, hex: string | undefined, dec: string | undefined, name: string | undefined) => {
+      if (hex !== undefined) {
+        return codePoint(parseInt(hex, 16));
+      }
+      if (dec !== undefined) {
+        return codePoint(Number(dec));
+      }
+      const key = name!.toLowerCase();
+      return Object.hasOwn(NAMED_ENTITIES, key) ? NAMED_ENTITIES[key]! : match;
+    },
   );
 }
 
@@ -88,28 +94,6 @@ export function localName(name: string): string {
 }
 
 /**
- * Compiled once per attribute name.
- *
- * `walkXml` hands attributes over as one raw string, so every lookup is a
- * match. That was two per document while nothing but a heading style depended
- * on one; a reader that resolves spans, levels, list ids and link targets asks
- * several of every element it passes. The names are the readers' own literals,
- * never anything a document chose, so the map is bounded by the source code.
- */
-const ATTRIBUTE_PATTERNS = new Map<string, RegExp>();
-
-function attributePattern(name: string): RegExp {
-  const known = ATTRIBUTE_PATTERNS.get(name);
-  if (known) {
-    return known;
-  }
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*(["'])([^]*?)\\1`);
-  ATTRIBUTE_PATTERNS.set(name, pattern);
-  return pattern;
-}
-
-/**
  * One attribute's value, entity-decoded.
  *
  * Single *or* double quoted, because XML allows both — `endOfTag` above already
@@ -124,8 +108,7 @@ function attributePattern(name: string): RegExp {
  * the heading `## A&amp;B`.
  */
 export function attributeOf(attributes: string, name: string): string | undefined {
-  const match = attributePattern(name).exec(attributes);
-  return match?.[2] === undefined ? undefined : decodeXmlEntities(match[2]);
+  return attributesOf(attributes).get(name);
 }
 
 /**

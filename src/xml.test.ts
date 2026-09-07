@@ -113,6 +113,21 @@ test("escaping round-trips through decoding", () => {
   assert.equal(decodeXmlEntities(escapeXml(raw)), raw);
 });
 
+test("numeric ampersands do not decode the text they introduce again", () => {
+  assert.equal(decodeXmlEntities("&#38;lt; &#x26;#65; &#x26;amp;"), "&lt; &#65; &amp;");
+  assert.equal(attributeOf('name="&#38;lt;"', "name"), "&lt;");
+});
+
+test("unknown entity names cannot resolve inherited object properties", () => {
+  assert.equal(decodeXmlEntities("&constructor;"), "&constructor;");
+});
+
+test("attribute-like text inside another value is not an attribute", () => {
+  const attributes = `descr='example name="wrong"' name="right"`;
+  assert.equal(attributeOf(attributes, "name"), "right");
+  assert.equal(attributeOf(`descr='example name="wrong"'`, "name"), undefined);
+});
+
 test("a prefix is stripped, and a name without one is left alone", () => {
   assert.equal(localName("table:table-cell"), "table-cell");
   assert.equal(localName("p"), "p");
