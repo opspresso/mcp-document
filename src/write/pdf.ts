@@ -621,18 +621,25 @@ class Writer {
     const rows = [block.header, ...block.rows];
     const columns = Math.max(1, ...rows.map((row) => row.length));
     const widths = columnWidths(rows, columns);
-    this.space(PARAGRAPH_SPACE);
-    rows.forEach((cells, index) => {
-      const header = index === 0;
-      const laid = Array.from({ length: columns }, (_, column) => {
+    const lineHeight = BODY_SIZE * LEADING.document.compact;
+    const pageHeight = PAGE_HEIGHT - 2 * MARGIN;
+    const layout = (cells: Run[][], header: boolean): Line[][] =>
+      Array.from({ length: columns }, (_, column) => {
         const runs = (cells[column] ?? []).map((run) => (header ? { ...run, bold: true } : run));
         return wrap(
           runs.flatMap((run) => atomsOf(run, this.fonts, BODY_SIZE, widths[column]! - 10)),
           widths[column]! - 10,
         );
       });
-      const lineHeight = BODY_SIZE * LEADING.document.compact;
-      const height = Math.max(1, ...laid.map((lines) => lines.length)) * lineHeight + 6;
+    const lineCount = (laid: Line[][]): number => Math.max(1, ...laid.map((lines) => lines.length));
+    const headerLines = layout(block.header, true);
+    const headerCount = lineCount(headerLines);
+    const headerHeight = headerCount * lineHeight + 6;
+    // A header taller than a page is rendered in full once, across pages.
+    const repeatHeader = headerHeight + lineHeight + 6 <= pageHeight;
+    const draw = (laid: Line[][], index: number, offset: number, count: number): void => {
+      const header = index === 0;
+      const height = count * lineHeight + 6;
       this.reserve(height);
       // One fill per row, not one box per cell. A full grid boxes every number
       // in; the eye reads a table by its rows, and the column gaps are already
@@ -661,7 +668,7 @@ class Writer {
       laid.forEach((lines, column) => {
         const width = widths[column]!;
         const align = block.align[column];
-        lines.forEach((line, lineIndex) => {
+        lines.slice(offset, offset + count).forEach((line, lineIndex) => {
           // Every line of a wrapped cell is placed on its own, so a two-line
           // right-aligned cell has both lines flush to the same edge.
           const left =
@@ -680,6 +687,30 @@ class Writer {
         });
         x += width;
       });
+    };
+    const nextPage = (index: number): void => {
+      this.newPage();
+      if (index > 0 && repeatHeader) draw(headerLines, 0, 0, headerCount);
+    };
+    this.space(PARAGRAPH_SPACE);
+    rows.forEach((cells, index) => {
+      const laid = index === 0 ? headerLines : layout(cells, false);
+      const count = lineCount(laid);
+      const height = count * lineHeight + 6;
+      const freshRoom = pageHeight - (index > 0 && repeatHeader ? headerHeight : 0);
+      if (height <= freshRoom && height > this.y - MARGIN) nextPage(index);
+      let offset = 0;
+      while (offset < count) {
+        const room = Math.floor((this.y - MARGIN - 6) / lineHeight);
+        if (room < 1) {
+          nextPage(index);
+          continue;
+        }
+        const take = Math.min(room, count - offset);
+        draw(laid, index, offset, take);
+        offset += take;
+        if (offset < count) nextPage(index);
+      }
     });
     this.space(PARAGRAPH_SPACE);
   }

@@ -318,3 +318,36 @@ test("an overlong paragraph word is wrapped within the page", async () => {
     }
   }
 });
+
+test("oversized table rows paginate without losing cells or drawing below the page", async () => {
+  const words = Array.from({ length: 600 }, (_, i) => `value${String(i).padStart(3, "0")}`);
+  const source = "| Key | Description |\n| --- | --- |\n| A | " + words.join(" ") + " |\n| B | LAST |";
+  const { bytes, pages } = await renderPdf(parseMarkdown(source), { title: "Table", created: CREATED });
+  assert.ok(pages > 1);
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  let text = "";
+  for (let n = 1; n <= pages; n += 1) {
+    const content = await (await pdf.getPage(n)).getTextContent();
+    const items = content.items.filter((item) => "str" in item);
+    assert.ok(items.some((item) => item.str === "Description"), "each table page repeats its header");
+    for (const item of items) {
+      if (item.str.trim()) {
+        assert.ok(item.transform[5] > 20 && item.transform[5] < 800, "text stays within the page");
+        text += item.str + " ";
+      }
+    }
+  }
+  for (const word of [...words, "LAST"]) assert.ok(text.includes(word), word);
+});
+
+test("a table header larger than a page is preserved without endless repetition", async () => {
+  const heading = "heading ".repeat(800) + "HEADER_END";
+  const { bytes, pages } = await renderPdf(parseMarkdown(`| ${heading} |\n| --- |\n| BODY_END |`), {
+    title: "Tall header", created: CREATED,
+  });
+  const text = await extractLines(bytes);
+  assert.ok(pages > 1 && pages < 10);
+  assert.equal(text.match(/heading/g)?.length, 800);
+  assert.ok(text.includes("HEADER_END") && text.includes("BODY_END"));
+});
