@@ -351,3 +351,34 @@ test("a table header larger than a page is preserved without endless repetition"
   assert.equal(text.match(/heading/g)?.length, 800);
   assert.ok(text.includes("HEADER_END") && text.includes("BODY_END"));
 });
+
+test("multi-page contents keep every heading and point to the shifted body pages", async () => {
+  const titles = Array.from({ length: 50 }, (_, i) => `Topic${String(i).padStart(2, "0")} ` + "extended heading ".repeat(6) + `END${i}`);
+  const source = "# Report\n\nSubtitle\n\n" + titles.map((title, i) => `## ${title}\n\nBODY${i}`).join("\n\n");
+  const { bytes } = await renderPdf(parseMarkdown(source), { title: "Contents", created: CREATED });
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text } = await extractText(pdf, { mergePages: false });
+  const firstBody = text.findIndex((page) => page.includes("BODY0"));
+  assert.ok(firstBody > 2, "contents need multiple pages");
+  const contents = text.slice(1, firstBody).join(" ").replace(/\b\d+\b/g, "").replace(/\s+/g, " ");
+  for (const [i, title] of titles.entries()) {
+    assert.ok(contents.includes(title.trim()), `complete title ${i}`);
+    const page = text.findIndex((p) => p.includes(`BODY${i}`)) + 1;
+    assert.ok(page > firstBody);
+  }
+  // Each number is aligned with the first line of its entry.
+  let checked = 0;
+  for (let page = 2; page <= firstBody; page += 1) {
+    const items = (await (await pdf.getPage(page)).getTextContent()).items.filter((item) => "str" in item);
+    for (const item of items) {
+      const title = /Topic\d{2}/.exec(item.str)?.[0];
+      if (!title) continue;
+      const expected = text.slice(firstBody).findIndex((body) => body.includes(title)) + firstBody + 1;
+      assert.ok(items.some((number) => number.str === String(expected) && number.transform[4] > 480 &&
+        Math.abs(number.transform[5] - item.transform[5]) < 0.1), title);
+      checked += 1;
+    }
+  }
+  assert.equal(checked, titles.length);
+});

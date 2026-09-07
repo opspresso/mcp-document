@@ -275,6 +275,12 @@ function textSegments(text: string, font: PDFFont, size: number, width: number):
   return lines;
 }
 
+interface TocEntry {
+  text: string;
+  level: number;
+  page: PDFPage;
+}
+
 class Writer {
   private page: PDFPage;
   private y: number;
@@ -282,7 +288,7 @@ class Writer {
   /** The blank second page a contents list is drawn onto once the body is laid. */
   private tocPage?: PDFPage;
   /** Level 1-2 headings in body order, with the page each landed on. */
-  private readonly headings: { text: string; level: number; page: number }[] = [];
+  private readonly headings: TocEntry[] = [];
   private readonly colours: PdfColours;
 
   constructor(
@@ -396,73 +402,69 @@ class Writer {
     });
   }
 
-  /**
-   * The contents, drawn onto the reserved page now that the body has decided
-   * which page every heading landed on — which makes this the one format whose
-   * contents page carries real numbers. Entries past one page are left out
-   * rather than flowed: a contents list that displaces the body it lists has
-   * the priorities backwards.
-   */
+  /** Lay out every contents entry before inserting pages and resolving page references. */
   fillToc(label: string): void {
     if (!this.tocPage) {
       return;
     }
-    const saved = { page: this.page, y: this.y };
-    this.page = this.tocPage;
-    this.y = PAGE_HEIGHT - MARGIN;
-
     const labelSize = HEADING_SIZES[0]!;
-    this.y -= labelSize * LEADING.document.heading;
-    this.page.drawText(label, {
-      x: MARGIN,
-      y: this.y + labelSize * 0.3,
-      size: labelSize,
-      font: this.fonts.bold,
-      color: this.colours.brand,
-    });
-    this.y -= 4;
-    this.page.drawLine({
-      start: { x: MARGIN, y: this.y },
-      end: { x: PAGE_WIDTH - MARGIN, y: this.y },
-      thickness: 0.75,
-      color: this.colours.brandLight,
-    });
-    this.y -= 10;
-
+    const top = PAGE_HEIGHT - MARGIN - labelSize * LEADING.document.heading - 14;
+    const height = BODY_SIZE * 1.7;
+    const capacity = Math.max(1, Math.floor((top - MARGIN) / height));
+    type TocLine = { line: Line; entry: TocEntry; first: boolean };
+    const groups: TocLine[][] = [[]];
     for (const entry of this.headings) {
-      const height = BODY_SIZE * 1.7;
-      if (this.y - height < MARGIN) {
-        break;
-      }
-      this.y -= height;
       const indent = (entry.level - 1) * INDENT_STEP;
-      const font = entry.level === 1 ? this.fonts.bold : this.fonts.regular;
-      const number = String(entry.page);
-      const numberWidth = this.fonts.regular.widthOfTextAtSize(number, BODY_SIZE);
-      // Cut rather than wrapped, like a code line: a two-line contents entry
-      // pushes every number below it off its row.
-      let text = entry.text;
-      const room = CONTENT_WIDTH - indent - numberWidth - 12;
-      while (text !== "" && font.widthOfTextAtSize(text, BODY_SIZE) > room) {
-        text = text.slice(0, -1);
+      const run = { text: entry.text, bold: entry.level === 1 };
+      const width = CONTENT_WIDTH - indent - 60;
+      const lines = wrap(atomsOf(run, this.fonts, BODY_SIZE, width), width);
+      let group = groups[groups.length - 1]!;
+      if (lines.length <= capacity && group.length + lines.length > capacity) {
+        group = [];
+        groups.push(group);
       }
-      const baseline = this.y + height * 0.25;
-      this.page.drawText(text, {
-        x: MARGIN + indent,
-        y: baseline,
-        size: BODY_SIZE,
-        font,
-        color: entry.level === 1 ? this.colours.ink : this.colours.muted,
-      });
-      this.page.drawText(number, {
-        x: PAGE_WIDTH - MARGIN - numberWidth,
-        y: baseline,
-        size: BODY_SIZE,
-        font: this.fonts.regular,
-        color: this.colours.muted,
+      lines.forEach((line, index) => {
+        if (group.length === capacity) {
+          group = [];
+          groups.push(group);
+        }
+        group.push({ line, entry, first: index === 0 });
       });
     }
-
+    const tocIndex = this.document.getPages().indexOf(this.tocPage);
+    const pages = [this.tocPage];
+    for (let index = 1; index < groups.length; index += 1) {
+      pages.push(this.document.insertPage(tocIndex + index, [PAGE_WIDTH, PAGE_HEIGHT]));
+      this.pages += 1;
+    }
+    const pageNumbers = new Map(this.document.getPages().map((page, index) => [page, index + 1]));
+    const saved = { page: this.page, y: this.y };
+    groups.forEach((group, index) => {
+      this.page = pages[index]!;
+      this.y = top;
+      this.page.drawText(label, {
+        x: MARGIN, y: top + 14 + labelSize * 0.3, size: labelSize,
+        font: this.fonts.bold, color: this.colours.brand,
+      });
+      this.page.drawLine({
+        start: { x: MARGIN, y: top + 10 },
+        end: { x: PAGE_WIDTH - MARGIN, y: top + 10 },
+        thickness: 0.75, color: this.colours.brandLight,
+      });
+      for (const { line, entry, first } of group) {
+        this.y -= height;
+        const baseline = this.y + height * 0.25;
+        this.drawLine(line, MARGIN + (entry.level - 1) * INDENT_STEP, BODY_SIZE, baseline,
+          entry.level === 1 ? this.colours.ink : this.colours.muted);
+        if (first) {
+          const number = String(pageNumbers.get(entry.page));
+          this.page.drawText(number, {
+            x: PAGE_WIDTH - MARGIN - this.fonts.regular.widthOfTextAtSize(number, BODY_SIZE),
+            y: baseline, size: BODY_SIZE, font: this.fonts.regular, color: this.colours.muted,
+          });
+        }
+      }
+    });
     this.page = saved.page;
     this.y = saved.y;
   }
@@ -574,7 +576,7 @@ class Writer {
       colour?: RGB;
       leading?: number;
     },
-  ): void {
+  ): PDFPage {
     const { size, left, width } = options;
     const atoms = [
       ...(options.firstLinePrefix ?? []),
@@ -582,11 +584,14 @@ class Writer {
     ];
     const lines = wrap(atoms, width);
     const height = size * (options.leading ?? LEADING.document.body);
+    let firstPage: PDFPage | undefined;
     for (const line of lines.length > 0 ? lines : [{ atoms: [], width: 0 }]) {
       this.reserve(height);
+      firstPage ??= this.page;
       // The baseline sits above the descender, not on the line's bottom edge.
       this.drawLine(line, left, size, this.y + height * 0.25, options.colour);
     }
+    return firstPage!;
   }
 
   private codeBlock(text: string): void {
@@ -759,7 +764,7 @@ class Writer {
       case "heading": {
         const size = HEADING_SIZES[block.level - 1]!;
         this.space(size * HEADING_SPACE_ABOVE);
-        this.paragraph(
+        const firstPage = this.paragraph(
           block.runs.map((run) => ({ ...run, bold: true })),
           {
             size,
@@ -774,7 +779,7 @@ class Writer {
           this.headings.push({
             text: plainTextOf(block.runs),
             level: block.level,
-            page: this.pages,
+            page: firstPage,
           });
         }
         // A hairline under the top two levels, in the brand colour. It is what
