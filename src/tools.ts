@@ -501,6 +501,7 @@ async function inspectDocument(args: Record<string, unknown>): Promise<ToolResul
 }
 
 type InspectionMode = "values" | "formulas" | "both";
+type FormattedCell = Pick<InspectedCell, "address"> & Partial<Omit<InspectedCell, "address">>;
 
 function inspectedLine(cell: InspectedCell, mode: InspectionMode): string | undefined {
   if (mode === "formulas") {
@@ -528,9 +529,9 @@ function inspectedLine(cell: InspectedCell, mode: InspectionMode): string | unde
 function formatInspection(
   inspection: XlsxInspection,
   mode: InspectionMode,
-): { text: string; sheets: Array<{ name: string; state: string; cells: InspectedCell[] }>; complete: boolean } {
+): { text: string; sheets: Array<{ name: string; state: string; cells: FormattedCell[] }>; complete: boolean } {
   const lines: string[] = [];
-  const sheets: Array<{ name: string; state: string; cells: InspectedCell[] }> = [];
+  const sheets: Array<{ name: string; state: string; cells: FormattedCell[] }> = [];
   let length = 0;
   let cut = false;
   for (const sheet of inspection.sheets) {
@@ -541,7 +542,7 @@ function formatInspection(
     }
     lines.push(heading);
     length += heading.length + 1;
-    const cells: InspectedCell[] = [];
+    const cells: FormattedCell[] = [];
     for (const cell of sheet.cells) {
       const line = inspectedLine(cell, mode);
       if (!line) {
@@ -552,7 +553,11 @@ function formatInspection(
         break;
       }
       lines.push(line);
-      cells.push(cell);
+      cells.push(mode === "formulas"
+        ? { address: cell.address, formula: cell.formula }
+        : mode === "values"
+          ? { address: cell.address, value: cell.value, ...(cell.error ? { error: cell.error } : {}) }
+          : cell);
       length += line.length + 1;
     }
     sheets.push({ name: sheet.name, state: sheet.state, cells });

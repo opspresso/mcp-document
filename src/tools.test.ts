@@ -229,6 +229,22 @@ test("spreadsheet creation refuses implicit and malformed formula objects", asyn
   assert.match(result.text, /formula cell/);
 });
 
+test("spreadsheet inspection mode also controls structured cell fields", async () => {
+  const { bytes } = renderXlsx([{ name: "Data", rows: [[{ formula: "1+2", cachedValue: 3 }]] }], {
+    title: "Data", created: "2026-01-01T00:00:00.000Z",
+  });
+  for (const [mode, expected] of [
+    ["values", { address: "A1", value: "3" }],
+    ["formulas", { address: "A1", formula: "1+2" }],
+    ["both", { address: "A1", value: "3", formula: "1+2" }],
+  ] as const) {
+    const result = await call("inspect_spreadsheet", { content: base64(bytes), mode });
+    assert.equal(result.isError, false, result.text);
+    const sheets = result.structured?.sheets as Array<{ cells: unknown[] }>;
+    assert.deepEqual(sheets[0]?.cells, [expected]);
+  }
+});
+
 test("nonsense base64 is a refusal, not bytes", async () => {
   const { text, isError } = await call("read_document", { content: '{"not":"base64"}' });
   assert.equal(isError, true);
