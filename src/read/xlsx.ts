@@ -25,6 +25,8 @@ import { DocumentError } from "../errors.js";
 import {
   MAX_INSPECTED_CELLS,
   MAX_SPREADSHEET_CELLS,
+  MAX_SPREADSHEET_COLUMNS,
+  MAX_SPREADSHEET_ROW_INDEX,
   MAX_SPREADSHEET_ROWS,
 } from "../limits.js";
 
@@ -281,11 +283,19 @@ class Sheet implements XmlHandler {
       return;
     }
     switch (localName(name)) {
-      case "row":
+      case "row": {
         this.cells = [];
         this.nextColumn = 0;
-        this.row = Number(attributeOf(attributes, "r")) || this.rowCount + 1;
+        const declared = attributeOf(attributes, "r");
+        this.row = declared === undefined ? this.row + 1 : Number(declared);
+        if (!Number.isInteger(this.row) || this.row < 1 || this.row > MAX_SPREADSHEET_ROW_INDEX) {
+          throw new XlsxError("a worksheet row index must be within 1–1,048,576");
+        }
+        if (selfClosing) {
+          this.close(name);
+        }
         return;
+      }
       case "c": {
         this.cellCount += 1;
         if (this.cellCount > MAX_SPREADSHEET_CELLS) {
@@ -297,9 +307,18 @@ class Sheet implements XmlHandler {
         const styled = Number(attributeOf(attributes, "s") ?? "");
         this.style = Number.isInteger(styled) ? styled : undefined;
         const reference = attributeOf(attributes, "r");
+        if (reference !== undefined && (
+          !/^[A-Za-z]{1,3}[1-9]\d{0,6}$/.test(reference) ||
+          Number(reference.replace(/^[A-Za-z]+/, "")) > MAX_SPREADSHEET_ROW_INDEX
+        )) {
+          throw new XlsxError("a cell address must be within A1:XFD1048576");
+        }
         // Absent addresses mean "the next column", which is what a writer that
         // omits them intends.
         this.column = reference ? columnOf(reference) : this.nextColumn;
+        if (this.column < 0 || this.column >= MAX_SPREADSHEET_COLUMNS) {
+          throw new XlsxError("a cell address must be within A1:XFD1048576");
+        }
         this.nextColumn = this.column + 1;
         this.address = reference ?? `${columnName(this.column)}${this.row}`;
         this.buffer = "";

@@ -56,6 +56,13 @@ test("invalid and duplicate sheet names are refused before a file is built", () 
   );
 });
 
+test("rows wider than the Excel grid are refused before rendering", () => {
+  assert.throws(
+    () => renderXlsx([{ name: "Data", rows: [Array(16_385).fill(null)] }], { title: "t", created: CREATED }),
+    /column limit/,
+  );
+});
+
 test("the header band is the design system's, not a colour typed into this file", () => {
   // It was `FF1F4E78` — one digit off the palette entry it had been copied from,
   // and the reason a renderer states no colour of its own.

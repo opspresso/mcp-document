@@ -10,7 +10,7 @@
  */
 
 import { DocumentError } from "../errors.js";
-import { MAX_SPREADSHEET_CELLS, MAX_SPREADSHEET_ROWS } from "../limits.js";
+import { MAX_SPREADSHEET_CELLS, MAX_SPREADSHEET_COLUMNS, MAX_SPREADSHEET_ROWS } from "../limits.js";
 import { PRODUCER } from "../version.js";
 import { escapeXml } from "../xml.js";
 import { buildZip } from "../zip.js";
@@ -116,6 +116,11 @@ function sheetsOf(raw: unknown): SpreadsheetSheet[] {
     const parsed = rows.map((row, rowIndex) => {
       if (!Array.isArray(row)) {
         throw new DocumentError(`sheet ${JSON.stringify(name)} row ${rowIndex + 1} must be an array`);
+      }
+      if (row.length > MAX_SPREADSHEET_COLUMNS) {
+        throw new DocumentError(
+          `sheet ${JSON.stringify(name)} row ${rowIndex + 1} exceeds the 16,384 column limit`,
+        );
       }
       totalCells += row.length;
       if (totalCells > MAX_SPREADSHEET_CELLS) {

@@ -59,6 +59,26 @@ test("columnOf reads the format's base-26 with no zero digit", () => {
   assert.equal(columnOf("AB1"), 27);
 });
 
+test("cell addresses outside the worksheet grid are refused before placement", () => {
+  for (const address of ["1", "A0", "A1048577", "XFE1", "ZZZZZZZZZZZZZZZZ1", "A1junk"]) {
+    const bytes = oneSheet(`<row><c r="${address}"><v>1</v></c></row>`);
+    assert.throws(() => inspectXlsx(bytes), /cell address/);
+    assert.throws(() => read(bytes), /cell address/);
+  }
+  const edge = oneSheet('<row r="1048576"><c r="XFD1048576"><v>1</v></c></row>');
+  assert.equal(inspectXlsx(edge).sheets[0]!.cells[0]!.address, "XFD1048576");
+  const beyond = oneSheet('<row><c r="XFD1"/><c><v>1</v></c></row>');
+  assert.throws(() => inspectXlsx(beyond), /cell address/);
+});
+
+test("implicit row indexes follow explicit and self-closing rows", () => {
+  const bytes = oneSheet('<row r="7"/><row><c><v>1</v></c></row>');
+  assert.equal(inspectXlsx(bytes).sheets[0]!.cells[0]!.address, "A8");
+  for (const row of ["0", "-1", "1.5", "1048577", "many"]) {
+    assert.throws(() => inspectXlsx(oneSheet(`<row r="${row}"/>`)), /row index/);
+  }
+});
+
 test("a shared string is resolved to its text, not left as an index", () => {
   const bytes = oneSheet(
     `<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>`,

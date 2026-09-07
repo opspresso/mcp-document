@@ -9,6 +9,8 @@ simple text extraction, formula inspection, and creation of a new workbook.
 not formulas, and bounds output on whole rows. This is the smallest result for a
 model that only needs to understand a table. The structured result names
 omissions so it cannot be mistaken for an original-preserving workbook read.
+Cell addresses must be within Excel's `A1:XFD1048576` grid. Missing addresses
+continue from the preceding row or column; out-of-range addresses are refused.
 
 ## Inspect without executing
 
@@ -47,6 +49,7 @@ begins with `=` remains a literal string. A formula must be explicit:
 it is not recomputed here. The generated workbook requests a full calculation
 when opened, freezes a non-empty header row and applies bounded column widths.
 It is structurally reopened before it is returned.
+Each row can contain at most 16,384 cells, matching Excel's column limit.
 
 This creates a new workbook. It does not edit or preserve an input workbook's
 styles, charts, comments, macros, external links, named ranges or pivot tables.

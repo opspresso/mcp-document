@@ -62,6 +62,10 @@ export const MAX_SPREADSHEET_ROWS = 100_000;
 export const MAX_SPREADSHEET_CELLS = 1_000_000;
 export const MAX_INSPECTED_CELLS = 10_000;
 
+/** Excel worksheet coordinates, independent of how many populated cells are parsed. */
+export const MAX_SPREADSHEET_COLUMNS = 16_384;
+export const MAX_SPREADSHEET_ROW_INDEX = 1_048_576;
+
 /**
  * Columns one ODF repeat run may stand for.
  *
